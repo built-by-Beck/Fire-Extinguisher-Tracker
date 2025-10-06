@@ -5,7 +5,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import Login from './Login';
-import CameraScanner from './CameraScanner';
+import BarcodeScanner from './BarcodeScanner';
 
 const SECTIONS = [
   'Main Hospital',
@@ -1405,7 +1405,7 @@ function App() {
         </div>
       )}
 
-      <CameraScanner
+      <BarcodeScanner
         isOpen={showCameraScanner}
         onScan={handleCameraScan}
         onClose={() => setShowCameraScanner(false)}
