@@ -63,8 +63,9 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
         if (result) {
           const text = result.getText();
           console.log('Scanned:', text);
-          onScan(text);
           stopScanner();
+          onClose();
+          onScan(text);
         }
 
         if (error && error.name !== 'NotFoundException') {
