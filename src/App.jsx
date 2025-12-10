@@ -74,11 +74,12 @@ function App() {
   // Export options state
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportOptions, setExportOptions] = useState({
-    type: 'all', // 'all', 'passed', 'failed'
+    type: 'all', // 'all', 'passed', 'failed', 'notes-only', 'atg-serial-dates'
     includePhotos: true,
     includeGPS: true,
     includeChecklist: true,
-    includeInspectionHistory: false
+    includeInspectionHistory: false,
+    includeMaintenanceDates: true
   });
 
   // Workspace state for multi-month support
@@ -1431,19 +1432,60 @@ function App() {
   };
 
   const exportData = (options = exportOptions) => {
-    const { type, includePhotos, includeGPS, includeChecklist, includeInspectionHistory } = options;
+    const { type, includePhotos, includeGPS, includeChecklist, includeInspectionHistory, includeMaintenanceDates } = options;
 
     let dataToExport;
+    let typeLabel;
 
+    // Filter data based on export type
     if (type === 'passed') {
       dataToExport = extinguishers.filter(e => e.status === 'pass');
+      typeLabel = 'Passed';
     } else if (type === 'failed') {
       dataToExport = extinguishers.filter(e => e.status === 'fail');
+      typeLabel = 'Failed';
+    } else if (type === 'notes-only') {
+      // Only export items that have notes
+      dataToExport = extinguishers.filter(e => e.notes && e.notes.trim() !== '');
+      typeLabel = 'Notes';
+    } else if (type === 'atg-serial-dates') {
+      // Export all items but only specific columns
+      dataToExport = extinguishers;
+      typeLabel = 'ATG_Serial_Dates';
+    } else if (type === 'pending') {
+      dataToExport = extinguishers.filter(e => e.status === 'pending');
+      typeLabel = 'Pending';
     } else {
       dataToExport = extinguishers;
+      typeLabel = 'All';
     }
 
     const formatted = dataToExport.map(item => {
+      // For ATG/Serial/Maintenance export - simplified asset list
+      if (type === 'atg-serial-dates') {
+        return {
+          'Asset ID (ATG)': item.assetId,
+          'Serial': item.serial,
+          'Vicinity': item.vicinity,
+          'Section': item.section,
+          'Mfg Year / 6-Year / Hydro': item.manufactureYear || ''
+        };
+      }
+
+      // For Notes Only export, focus on notes
+      if (type === 'notes-only') {
+        return {
+          'Asset ID': item.assetId,
+          'Serial': item.serial,
+          'Section': item.section,
+          'Vicinity': item.vicinity,
+          'Status': item.status.toUpperCase(),
+          'Notes': item.notes || '',
+          'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : ''
+        };
+      }
+
+      // Standard full export
       const baseData = {
         'Asset ID': item.assetId,
         'Serial': item.serial,
@@ -1454,6 +1496,11 @@ function App() {
         'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
         'Notes': item.notes || ''
       };
+
+      // Add maintenance/manufacture dates if requested
+      if (includeMaintenanceDates) {
+        baseData['Mfg Year / 6-Year / Hydro'] = item.manufactureYear || '';
+      }
 
       // Add GPS data if requested
       if (includeGPS) {
@@ -1509,12 +1556,10 @@ function App() {
       return baseData;
     });
 
-    // Generate filename with previous month's name and current timestamp
+    // Generate filename with CURRENT month's name (not previous month)
     const now = new Date();
-    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-    const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+    const monthName = now.toLocaleDateString('en-US', { month: 'long' });
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
-    const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
 
     const ws = XLSX.utils.json_to_sheet(formatted);
     const wb = XLSX.utils.book_new();
@@ -1533,10 +1578,9 @@ function App() {
       'Section Notes': sectionNotes[section]?.notes || ''
     }));
 
-    // Generate filename with previous month's name and current timestamp
+    // Generate filename with CURRENT month's name and timestamp
     const now = new Date();
-    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-    const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+    const monthName = now.toLocaleDateString('en-US', { month: 'long' });
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
 
     const ws = XLSX.utils.json_to_sheet(timeData);
@@ -3254,6 +3298,34 @@ function App() {
               )}
             </div>
 
+            {/* Mfg Year / 6-Year / Hydro field */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Mfg Year / 6-Year / Hydro Test
+              </label>
+              <input
+                type="text"
+                value={selectedItem.manufactureYear || ''}
+                onChange={async (e) => {
+                  const newValue = e.target.value;
+                  setSelectedItem({ ...selectedItem, manufactureYear: newValue });
+                }}
+                onBlur={async (e) => {
+                  const newValue = e.target.value.trim();
+                  try {
+                    const docRef = doc(db, 'extinguishers', selectedItem.id);
+                    await updateDoc(docRef, { manufactureYear: newValue });
+                  } catch (err) {
+                    console.error('Error saving manufacture year:', err);
+                    alert('Error saving. Please try again.');
+                  }
+                }}
+                placeholder="e.g., 2019 / 6yr: 2025 / Hydro: 2031"
+                className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500"
+              />
+              <div className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year service date, or hydrostatic test date</div>
+            </div>
+
             {/* Notes always visible */}
             <div className="space-y-4">
               <div>
@@ -3670,8 +3742,20 @@ function App() {
                   <option value="all">All Extinguishers</option>
                   <option value="passed">Passed Only</option>
                   <option value="failed">Failed Only</option>
+                  <option value="pending">Pending Only</option>
+                  <option value="notes-only">Notes Only (items with notes)</option>
+                  <option value="atg-serial-dates">ATG + Serial + Dates Only</option>
                 </select>
               </div>
+
+              {/* Note about specialized exports */}
+              {(exportOptions.type === 'notes-only' || exportOptions.type === 'atg-serial-dates') && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+                  {exportOptions.type === 'notes-only'
+                    ? 'This will export only items that have notes, with columns: Asset ID, Serial, Section, Vicinity, Status, Notes, Checked Date'
+                    : 'This will export a simplified list with columns: Asset ID (ATG), Serial, Vicinity, Section, Mfg Year / 6-Year / Hydro'}
+                </div>
+              )}
 
               {/* Include Options */}
               <div className="border-t pt-3">
@@ -3718,6 +3802,16 @@ function App() {
                       className="mr-2 h-4 w-4"
                     />
                     <span className="text-sm">Full Inspection History</span>
+                  </label>
+
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeMaintenanceDates}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includeMaintenanceDates: e.target.checked })}
+                      className="mr-2 h-4 w-4"
+                    />
+                    <span className="text-sm">Mfg Year / 6-Year / Hydro Test Dates</span>
                   </label>
                 </div>
               </div>
