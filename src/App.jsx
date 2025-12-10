@@ -1118,33 +1118,47 @@ function App() {
 
     const processFile = async () => {
       try {
-        const workbook = new ExcelJS.Workbook();
-        const arrayBuffer = await file.arrayBuffer();
+        let jsonData = [];
         
-        // Load the file based on type
         if (file.name.endsWith('.csv')) {
-          await workbook.csv.read(Buffer.from(arrayBuffer));
+          // Parse CSV manually
+          const text = await file.text();
+          const lines = text.split('\n').filter(line => line.trim());
+          if (lines.length === 0) throw new Error('Empty file');
+          
+          const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+          
+          for (let i = 1; i < lines.length; i++) {
+            const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+            const row = {};
+            headers.forEach((header, idx) => {
+              row[header] = values[idx] || '';
+            });
+            jsonData.push(row);
+          }
         } else {
+          // Parse Excel file
+          const workbook = new ExcelJS.Workbook();
+          const arrayBuffer = await file.arrayBuffer();
           await workbook.xlsx.load(arrayBuffer);
-        }
-        
-        const worksheet = workbook.worksheets[0];
-        const jsonData = [];
-        
-        // Convert worksheet to JSON
-        const headers = [];
-        worksheet.getRow(1).eachCell((cell) => {
-          headers.push(cell.value);
-        });
-        
-        worksheet.eachRow((row, rowNumber) => {
-          if (rowNumber === 1) return; // Skip header row
-          const rowData = {};
-          row.eachCell((cell, colNumber) => {
-            rowData[headers[colNumber - 1]] = cell.value;
+          
+          const worksheet = workbook.worksheets[0];
+          
+          // Convert worksheet to JSON
+          const headers = [];
+          worksheet.getRow(1).eachCell((cell) => {
+            headers.push(cell.value);
           });
-          jsonData.push(rowData);
-        });
+          
+          worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber === 1) return; // Skip header row
+            const rowData = {};
+            row.eachCell((cell, colNumber) => {
+              rowData[headers[colNumber - 1]] = cell.value;
+            });
+            jsonData.push(rowData);
+          });
+        }
         
         // Prepare a local index of existing extinguishers by Asset ID (string)
         // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
@@ -1645,14 +1659,16 @@ function App() {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Time Tracking');
     
-    // Add headers
-    const headers = Object.keys(timeData[0]);
-    worksheet.addRow(headers);
-    
-    // Add data rows
-    timeData.forEach(row => {
-      worksheet.addRow(Object.values(row));
-    });
+    // Add headers and data if timeData is not empty
+    if (timeData.length > 0) {
+      const headers = Object.keys(timeData[0]);
+      worksheet.addRow(headers);
+      
+      // Add data rows
+      timeData.forEach(row => {
+        worksheet.addRow(Object.values(row));
+      });
+    }
     
     // Write to file
     workbook.xlsx.writeBuffer().then(buffer => {
