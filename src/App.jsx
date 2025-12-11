@@ -99,6 +99,19 @@ function App() {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncImporting, setSyncImporting] = useState(false);
 
+  // Replace extinguisher state
+  const [showReplaceModal, setShowReplaceModal] = useState(false);
+  const [replaceItem, setReplaceItem] = useState(null);
+  const [replaceFormData, setReplaceFormData] = useState({
+    newAssetId: '',
+    newSerial: '',
+    newManufactureYear: '',
+    replacementReason: '',
+    replacementNotes: ''
+  });
+  const [replacedExtinguishers, setReplacedExtinguishers] = useState([]);
+  const [showReplacedHistory, setShowReplacedHistory] = useState(false);
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const dbBackupInputRef = useRef(null);
@@ -270,6 +283,31 @@ function App() {
     });
 
     return () => unsubscribeSectionNotes();
+  }, [user]);
+
+  // Load replaced extinguishers
+  useEffect(() => {
+    if (!user) {
+      setReplacedExtinguishers([]);
+      return;
+    }
+
+    const replacedQuery = query(
+      collection(db, 'replacedExtinguishers'),
+      where('userId', '==', user.uid)
+    );
+
+    const unsubscribeReplaced = onSnapshot(replacedQuery, (snapshot) => {
+      const replacedData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      // Sort by replacement date, most recent first
+      replacedData.sort((a, b) => new Date(b.replacedAt) - new Date(a.replacedAt));
+      setReplacedExtinguishers(replacedData);
+    });
+
+    return () => unsubscribeReplaced();
   }, [user]);
 
   useEffect(() => {
@@ -1431,6 +1469,101 @@ function App() {
     }
   };
 
+  // Open the replace extinguisher modal
+  const openReplaceModal = (item) => {
+    setReplaceItem(item);
+    setReplaceFormData({
+      newAssetId: item.assetId, // Default to same asset ID (location stays the same)
+      newSerial: '',
+      newManufactureYear: '',
+      replacementReason: 'out_of_date',
+      replacementNotes: ''
+    });
+    setShowReplaceModal(true);
+    setSelectedItem(null); // Close the inspection modal
+  };
+
+  // Handle the replacement of an extinguisher
+  const handleReplaceExtinguisher = async () => {
+    if (!replaceItem || !replaceFormData.newSerial.trim()) {
+      alert('Please enter the new serial number.');
+      return;
+    }
+
+    try {
+      // 1. Archive the old extinguisher to replacedExtinguishers collection
+      const archivedData = {
+        // Original extinguisher data
+        originalId: replaceItem.id,
+        originalAssetId: replaceItem.assetId,
+        originalSerial: replaceItem.serial,
+        vicinity: replaceItem.vicinity,
+        parentLocation: replaceItem.parentLocation,
+        section: replaceItem.section,
+        manufactureYear: replaceItem.manufactureYear || '',
+        photos: replaceItem.photos || [],
+        photoUrl: replaceItem.photoUrl || null,
+        location: replaceItem.location || null,
+        inspectionHistory: replaceItem.inspectionHistory || [],
+        lastStatus: replaceItem.status,
+        lastCheckedDate: replaceItem.checkedDate,
+        lastNotes: replaceItem.notes,
+        checklistData: replaceItem.checklistData || null,
+        // Replacement metadata
+        replacedAt: new Date().toISOString(),
+        replacedBy: user.email || 'Unknown',
+        replacementReason: replaceFormData.replacementReason,
+        replacementNotes: replaceFormData.replacementNotes.trim(),
+        newAssetId: replaceFormData.newAssetId.trim(),
+        newSerial: replaceFormData.newSerial.trim(),
+        // User/workspace context
+        userId: user.uid,
+        workspaceId: currentWorkspaceId
+      };
+
+      await addDoc(collection(db, 'replacedExtinguishers'), archivedData);
+
+      // 2. Update the existing extinguisher record with new info
+      const docRef = doc(db, 'extinguishers', replaceItem.id);
+      await updateDoc(docRef, {
+        assetId: replaceFormData.newAssetId.trim() || replaceItem.assetId,
+        serial: replaceFormData.newSerial.trim(),
+        manufactureYear: replaceFormData.newManufactureYear.trim(),
+        // Reset inspection status for the new extinguisher
+        status: 'pending',
+        checkedDate: null,
+        notes: '',
+        checklistData: null,
+        lastInspectionPhotoUrl: null,
+        lastInspectionGps: null,
+        // Keep the location and photos - the new extinguisher is in the same spot
+        // but clear inspection history since it's a new unit
+        inspectionHistory: [],
+        // Track that this was replaced
+        replacedFrom: {
+          serial: replaceItem.serial,
+          replacedAt: new Date().toISOString()
+        }
+      });
+
+      // 3. Close modal and show success
+      setShowReplaceModal(false);
+      setReplaceItem(null);
+      setReplaceFormData({
+        newAssetId: '',
+        newSerial: '',
+        newManufactureYear: '',
+        replacementReason: '',
+        replacementNotes: ''
+      });
+
+      alert(`Fire extinguisher replaced successfully!\n\nOld serial: ${replaceItem.serial}\nNew serial: ${replaceFormData.newSerial.trim()}\n\nThe old extinguisher data has been archived.`);
+    } catch (error) {
+      console.error('Error replacing extinguisher:', error);
+      alert('Error replacing fire extinguisher. Please try again.');
+    }
+  };
+
   const exportData = (options = exportOptions) => {
     const { type, includePhotos, includeGPS, includeChecklist, includeInspectionHistory, includeMaintenanceDates } = options;
 
@@ -2440,6 +2573,26 @@ function App() {
                 Backup Now
               </button>
 
+              {/* Replaced Extinguishers Section */}
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Equipment Tracking</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowReplacedHistory(true);
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 transition w-full"
+              >
+                <RotateCcw size={20} />
+                Replaced Extinguishers
+                {replacedExtinguishers.length > 0 && (
+                  <span className="ml-auto bg-amber-700 text-white text-xs px-2 py-0.5 rounded-full">
+                    {replacedExtinguishers.length}
+                  </span>
+                )}
+              </button>
+
               {adminMode && (
                 <>
                   <div className="border-t pt-2 mt-4">
@@ -3373,13 +3526,20 @@ function App() {
               )}
             </div>
 
-            <div className="mt-4 pt-4 border-t border-gray-700">
+            <div className="mt-4 pt-4 border-t border-gray-700 space-y-3">
               <button
                 onClick={() => handleEdit(selectedItem)}
                 className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
               >
                 <Edit2 size={20} />
                 Edit Extinguisher Details
+              </button>
+              <button
+                onClick={() => openReplaceModal(selectedItem)}
+                className="w-full bg-amber-600 text-white p-3 rounded-lg hover:bg-amber-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
+              >
+                <RotateCcw size={20} />
+                Replace Extinguisher
               </button>
             </div>
           </div>
@@ -3839,6 +3999,260 @@ function App() {
               <div className="text-xs text-gray-500 mt-2">
                 Export will include: Basic info + your selected options above
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Replace Extinguisher Modal */}
+      {showReplaceModal && replaceItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 max-w-lg w-full my-8 border-2 border-amber-500 shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-amber-400 flex items-center gap-2">
+                <RotateCcw size={24} />
+                Replace Fire Extinguisher
+              </h3>
+              <button
+                onClick={() => {
+                  setShowReplaceModal(false);
+                  setReplaceItem(null);
+                }}
+                className="text-gray-400 hover:text-white transition"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Current extinguisher info */}
+            <div className="bg-gray-700/50 rounded-lg p-4 mb-4 border border-gray-600">
+              <h4 className="text-sm font-semibold text-gray-400 mb-2">Current Extinguisher (Being Replaced)</h4>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-gray-400">Asset ID:</span>
+                  <span className="text-white ml-2 font-semibold">{replaceItem.assetId}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Serial:</span>
+                  <span className="text-white ml-2 font-mono">{replaceItem.serial}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-gray-400">Location:</span>
+                  <span className="text-white ml-2">{replaceItem.vicinity}</span>
+                </div>
+                {replaceItem.manufactureYear && (
+                  <div className="col-span-2">
+                    <span className="text-gray-400">Mfg/Dates:</span>
+                    <span className="text-white ml-2">{replaceItem.manufactureYear}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Replacement reason */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Reason for Replacement
+              </label>
+              <select
+                value={replaceFormData.replacementReason}
+                onChange={(e) => setReplaceFormData({...replaceFormData, replacementReason: e.target.value})}
+                className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+              >
+                <option value="out_of_date">Out of Date (Expired)</option>
+                <option value="hydro_due">Hydrostatic Test Due</option>
+                <option value="six_year_due">6-Year Maintenance Due</option>
+                <option value="damaged">Damaged</option>
+                <option value="discharged">Discharged/Used</option>
+                <option value="failed_inspection">Failed Inspection</option>
+                <option value="upgrade">Upgrade/Different Type</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+
+            {/* New extinguisher info */}
+            <div className="bg-amber-900/30 rounded-lg p-4 mb-4 border border-amber-600/50">
+              <h4 className="text-sm font-semibold text-amber-400 mb-3">New Extinguisher Information</h4>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    Asset ID <span className="text-gray-500">(usually stays the same)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={replaceFormData.newAssetId}
+                    onChange={(e) => setReplaceFormData({...replaceFormData, newAssetId: e.target.value})}
+                    className="w-full p-2 border border-gray-600 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-amber-500"
+                    placeholder={replaceItem.assetId}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    New Serial Number <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={replaceFormData.newSerial}
+                    onChange={(e) => setReplaceFormData({...replaceFormData, newSerial: e.target.value})}
+                    className="w-full p-2 border border-gray-600 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-amber-500"
+                    placeholder="Enter new serial number"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">
+                    Manufacture Year / Dates
+                  </label>
+                  <input
+                    type="text"
+                    value={replaceFormData.newManufactureYear}
+                    onChange={(e) => setReplaceFormData({...replaceFormData, newManufactureYear: e.target.value})}
+                    className="w-full p-2 border border-gray-600 rounded-lg bg-gray-700 text-white focus:ring-2 focus:ring-amber-500"
+                    placeholder="e.g., 2024 / 6yr: 2030 / Hydro: 2036"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Replacement Notes (optional)
+              </label>
+              <textarea
+                rows="2"
+                value={replaceFormData.replacementNotes}
+                onChange={(e) => setReplaceFormData({...replaceFormData, replacementNotes: e.target.value})}
+                className="w-full p-2 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-amber-500"
+                placeholder="Any additional notes about this replacement..."
+              />
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowReplaceModal(false);
+                  setReplaceItem(null);
+                }}
+                className="flex-1 bg-gray-600 text-white p-3 rounded-lg hover:bg-gray-700 font-semibold transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReplaceExtinguisher}
+                className="flex-1 bg-amber-600 text-white p-3 rounded-lg hover:bg-amber-700 font-semibold transition flex items-center justify-center gap-2"
+              >
+                <RotateCcw size={18} />
+                Replace
+              </button>
+            </div>
+
+            <div className="mt-4 text-xs text-gray-500 text-center">
+              The old extinguisher's data will be archived and can be viewed in the Replaced History.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Replaced Extinguishers History Modal */}
+      {showReplacedHistory && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 max-w-2xl w-full my-8 border-2 border-gray-600 shadow-2xl max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-gray-200 flex items-center gap-2">
+                <History size={24} />
+                Replaced Extinguishers History
+              </h3>
+              <button
+                onClick={() => setShowReplacedHistory(false)}
+                className="text-gray-400 hover:text-white transition"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="text-sm text-gray-400 mb-4">
+              {replacedExtinguishers.length} extinguisher{replacedExtinguishers.length !== 1 ? 's' : ''} have been replaced
+            </div>
+
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {replacedExtinguishers.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No extinguishers have been replaced yet.
+                </div>
+              ) : (
+                replacedExtinguishers.map((item) => (
+                  <div key={item.id} className="bg-gray-700/50 rounded-lg p-4 border border-gray-600">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <span className="text-amber-400 font-semibold">{item.originalAssetId}</span>
+                        <span className="text-gray-400 mx-2">→</span>
+                        <span className="text-green-400 font-semibold">{item.newAssetId || item.originalAssetId}</span>
+                      </div>
+                      <span className="text-xs text-gray-500">
+                        {new Date(item.replacedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-sm mb-2">
+                      <div>
+                        <span className="text-gray-500">Old Serial:</span>
+                        <span className="text-red-400 ml-1 font-mono">{item.originalSerial}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">New Serial:</span>
+                        <span className="text-green-400 ml-1 font-mono">{item.newSerial}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-sm">
+                      <span className="text-gray-500">Location:</span>
+                      <span className="text-gray-300 ml-1">{item.vicinity}</span>
+                      {item.section && <span className="text-gray-500 ml-1">({item.section})</span>}
+                    </div>
+
+                    <div className="flex items-center gap-2 mt-2 text-xs">
+                      <span className="bg-gray-600 text-gray-300 px-2 py-0.5 rounded">
+                        {item.replacementReason === 'out_of_date' ? 'Expired' :
+                         item.replacementReason === 'hydro_due' ? 'Hydro Due' :
+                         item.replacementReason === 'six_year_due' ? '6-Year Due' :
+                         item.replacementReason === 'damaged' ? 'Damaged' :
+                         item.replacementReason === 'discharged' ? 'Discharged' :
+                         item.replacementReason === 'failed_inspection' ? 'Failed Inspection' :
+                         item.replacementReason === 'upgrade' ? 'Upgrade' :
+                         item.replacementReason || 'Replaced'}
+                      </span>
+                      {item.manufactureYear && (
+                        <span className="text-gray-500">
+                          Was: {item.manufactureYear}
+                        </span>
+                      )}
+                    </div>
+
+                    {item.replacementNotes && (
+                      <div className="mt-2 text-xs text-gray-400 italic">
+                        Note: {item.replacementNotes}
+                      </div>
+                    )}
+
+                    <div className="mt-2 text-xs text-gray-600">
+                      Replaced by {item.replacedBy} on {new Date(item.replacedAt).toLocaleString()}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <button
+                onClick={() => setShowReplacedHistory(false)}
+                className="w-full bg-gray-600 text-white p-3 rounded-lg hover:bg-gray-700 font-semibold transition"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
