@@ -112,6 +112,9 @@ function App() {
   const [replacedExtinguishers, setReplacedExtinguishers] = useState([]);
   const [showReplacedHistory, setShowReplacedHistory] = useState(false);
 
+  // Status filter view state (for clickable status boxes)
+  const [statusFilterView, setStatusFilterView] = useState(null); // 'pending', 'pass', 'fail', or null
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const dbBackupInputRef = useRef(null);
@@ -1614,7 +1617,8 @@ function App() {
           'Vicinity': item.vicinity,
           'Status': item.status.toUpperCase(),
           'Notes': item.notes || '',
-          'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : ''
+          'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
+          'Mfg Year / 6-Year / Hydro': item.manufactureYear || ''
         };
       }
 
@@ -1627,13 +1631,9 @@ function App() {
         'Section': item.section,
         'Status': item.status.toUpperCase(),
         'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
-        'Notes': item.notes || ''
+        'Notes': item.notes || '',
+        'Mfg Year / 6-Year / Hydro': item.manufactureYear || ''
       };
-
-      // Add maintenance/manufacture dates if requested
-      if (includeMaintenanceDates) {
-        baseData['Mfg Year / 6-Year / Hydro'] = item.manufactureYear || '';
-      }
 
       // Add GPS data if requested
       if (includeGPS) {
@@ -2722,17 +2722,29 @@ function App() {
         )}
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white p-4 rounded-lg shadow text-center">
+          <div
+            className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:bg-gray-50 hover:shadow-md transition-all active:scale-95"
+            onClick={() => stats.pending > 0 && setStatusFilterView('pending')}
+          >
             <div className="text-3xl font-bold text-gray-700">{stats.pending}</div>
             <div className="text-gray-600">Pending</div>
+            {stats.pending > 0 && <div className="text-xs text-blue-500 mt-1">Tap to view</div>}
           </div>
-          <div className="bg-white p-4 rounded-lg shadow text-center">
+          <div
+            className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:bg-green-50 hover:shadow-md transition-all active:scale-95"
+            onClick={() => stats.pass > 0 && setStatusFilterView('pass')}
+          >
             <div className="text-3xl font-bold text-green-600">{stats.pass}</div>
             <div className="text-gray-600">Passed</div>
+            {stats.pass > 0 && <div className="text-xs text-blue-500 mt-1">Tap to view</div>}
           </div>
-          <div className="bg-white p-4 rounded-lg shadow text-center">
+          <div
+            className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:bg-red-50 hover:shadow-md transition-all active:scale-95"
+            onClick={() => stats.fail > 0 && setStatusFilterView('fail')}
+          >
             <div className="text-3xl font-bold text-red-600">{stats.fail}</div>
             <div className="text-gray-600">Failed</div>
+            {stats.fail > 0 && <div className="text-xs text-blue-500 mt-1">Tap to view</div>}
           </div>
           <div className="bg-white p-4 rounded-lg shadow text-center">
             <div className="text-3xl font-bold text-purple-600">
@@ -4249,6 +4261,112 @@ function App() {
             <div className="mt-4 pt-4 border-t border-gray-700">
               <button
                 onClick={() => setShowReplacedHistory(false)}
+                className="w-full bg-gray-600 text-white p-3 rounded-lg hover:bg-gray-700 font-semibold transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Status Filter View Modal - shows filtered extinguishers by status */}
+      {statusFilterView && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 max-w-2xl w-full my-8 border-2 border-gray-600 shadow-2xl max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-gray-200 flex items-center gap-2">
+                {statusFilterView === 'fail' && <XCircle className="text-red-500" size={24} />}
+                {statusFilterView === 'pass' && <CheckCircle className="text-green-500" size={24} />}
+                {statusFilterView === 'pending' && <Circle className="text-gray-400" size={24} />}
+                {statusFilterView === 'fail' ? 'Failed Extinguishers' :
+                 statusFilterView === 'pass' ? 'Passed Extinguishers' : 'Pending Extinguishers'}
+              </h3>
+              <button
+                onClick={() => setStatusFilterView(null)}
+                className="text-gray-400 hover:text-white transition"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="text-sm text-gray-400 mb-4">
+              {extinguishers.filter(e => e.status === statusFilterView).length} extinguisher{extinguishers.filter(e => e.status === statusFilterView).length !== 1 ? 's' : ''}
+              {statusFilterView === 'fail' && ' need attention'}
+              {statusFilterView === 'pass' && ' inspected successfully'}
+              {statusFilterView === 'pending' && ' awaiting inspection'}
+            </div>
+
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {extinguishers.filter(e => e.status === statusFilterView).length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No {statusFilterView === 'fail' ? 'failed' : statusFilterView === 'pass' ? 'passed' : 'pending'} extinguishers.
+                </div>
+              ) : (
+                extinguishers
+                  .filter(e => e.status === statusFilterView)
+                  .sort((a, b) => (a.section || '').localeCompare(b.section || ''))
+                  .map((item) => (
+                    <div
+                      key={item.id}
+                      className="bg-gray-700/50 rounded-lg p-4 border border-gray-600 cursor-pointer hover:bg-gray-700 transition"
+                      onClick={() => {
+                        setStatusFilterView(null);
+                        setSelectedItem(item);
+                      }}
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <span className={`font-semibold ${
+                            statusFilterView === 'fail' ? 'text-red-400' :
+                            statusFilterView === 'pass' ? 'text-green-400' : 'text-gray-300'
+                          }`}>{item.assetId}</span>
+                          <span className="text-gray-500 ml-2 font-mono text-sm">{item.serial}</span>
+                        </div>
+                        <span className="text-xs bg-gray-600 text-gray-300 px-2 py-1 rounded">
+                          {item.section}
+                        </span>
+                      </div>
+
+                      <div className="text-sm text-gray-300 mb-1">
+                        <span className="text-gray-500">Location:</span> {item.vicinity}
+                      </div>
+
+                      {item.parentLocation && (
+                        <div className="text-sm text-gray-400">
+                          <span className="text-gray-500">Area:</span> {item.parentLocation}
+                        </div>
+                      )}
+
+                      {item.manufactureYear && (
+                        <div className="text-sm text-gray-400 mt-1">
+                          <span className="text-gray-500">Mfg Date:</span> {item.manufactureYear}
+                        </div>
+                      )}
+
+                      {item.notes && (
+                        <div className="mt-2 text-sm text-amber-400 bg-amber-900/30 p-2 rounded">
+                          <span className="text-amber-500">Notes:</span> {item.notes}
+                        </div>
+                      )}
+
+                      {item.checkedDate && (
+                        <div className="mt-2 text-xs text-gray-500">
+                          Last checked: {new Date(item.checkedDate).toLocaleString()}
+                        </div>
+                      )}
+
+                      <div className="mt-2 text-xs text-blue-400">
+                        Tap to view details →
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <button
+                onClick={() => setStatusFilterView(null)}
                 className="w-full bg-gray-600 text-white p-3 rounded-lg hover:bg-gray-700 font-semibold transition"
               >
                 Close
