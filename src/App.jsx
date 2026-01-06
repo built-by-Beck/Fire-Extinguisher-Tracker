@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
@@ -87,11 +87,12 @@ function App() {
   // Export options state
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportOptions, setExportOptions] = useState({
-    type: 'all', // 'all', 'passed', 'failed'
+    type: 'all', // 'all', 'passed', 'failed', 'notes-only', 'atg-serial-dates'
     includePhotos: true,
     includeGPS: true,
     includeChecklist: true,
-    includeInspectionHistory: false
+    includeInspectionHistory: false,
+    includeMaintenanceDates: true
   });
 
   // Workspace state for multi-month support
@@ -966,15 +967,34 @@ function App() {
         'Section': item.section || ''
       }));
 
-      // Ensure stable ordering
+      // Create workbook and worksheet using ExcelJS
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Extinguishers');
+      
+      // Add header row
       const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section'];
-      const ws = XLSX.utils.json_to_sheet(rows, { header });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Extinguishers');
+      worksheet.addRow(header);
+      
+      // Add data rows
+      rows.forEach(row => {
+        worksheet.addRow([row['Asset ID'], row['Serial'], row['Vicinity'], row['Parent Location'], row['Section']]);
+      });
+      
       const now = new Date();
       const { monthName, year } = getWorkspaceMonthInfo();
       const date = now.toISOString().split('T')[0];
-      XLSX.writeFile(wb, `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`);
+      
+      // Write to CSV
+      const buffer = await workbook.csv.writeBuffer();
+      const blob = new Blob([buffer], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Extinguisher_Database_Export_${date}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Error exporting CSV:', e);
       alert('Failed to export CSV.');
@@ -1385,98 +1405,130 @@ function App() {
     const file = e.target.files[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    
-    reader.onload = (event) => {
-      const processFile = async () => {
-        try {
-          const data = new Uint8Array(event.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet);
-          // Prepare a local index of existing extinguishers by Asset ID (string)
-          // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
-          const existingIndex = new Map(
-            (extinguishers || [])
-              .filter(x => x && x.assetId)
-              .map(x => [String(x.assetId), x])
-          );
-
-          // Normalize and parse incoming rows; allow a Section column to override the dropdown
-          const parsed = jsonData
-            .map((row) => {
-              const assetIdRaw = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || row['assetId'] || row['ID'] || '';
-              const assetId = String(assetIdRaw || '').trim();
-              if (!assetId) return null;
-
-              const vicinity = String(row['Vicinity'] || row['vicinity'] || '').trim();
-              const serial = String(row['Serial'] || row['serial'] || '').trim();
-              const parentLocation = String(row['Parent Location'] || row['Parent\nLocation'] || row['parentLocation'] || '').trim();
-              const sectionFromRow = row['Section'] || row['SECTION'] || row['section'] || row['Building'] || row['Area'] || null;
-              const resolvedSection = sectionFromRow ? String(sectionFromRow).trim() : importSection;
-
-              return {
-                assetId,
-                vicinity,
-                serial,
-                parentLocation,
-                section: resolvedSection,
-              };
-            })
-            .filter(Boolean);
-
-          let added = 0;
-          let updated = 0;
-
-          // Merge: update existing by assetId; add new otherwise. Never delete or overwrite photos/history.
-          for (const item of parsed) {
-            const existing = existingIndex.get(item.assetId);
-            try {
-              if (existing) {
-                const docRef = doc(db, 'extinguishers', existing.id);
-                await setDoc(docRef, {
-                  vicinity: item.vicinity,
-                  serial: item.serial,
-                  parentLocation: item.parentLocation,
-                  section: item.section,
-                  // Intentionally do NOT touch: status, notes, photos, inspectionHistory, lastInspection*
-                  updatedAt: new Date().toISOString()
-                }, { merge: true });
-                updated += 1;
-              } else {
-                await addDoc(collection(db, 'extinguishers'), {
-                  assetId: item.assetId,
-                  vicinity: item.vicinity,
-                  serial: item.serial,
-                  parentLocation: item.parentLocation,
-                  section: item.section,
-                  status: 'pending',
-                  checkedDate: null,
-                  notes: '',
-                  inspectionHistory: [],
-                  userId: user.uid,
-                  workspaceId: currentWorkspaceId,
-                  createdAt: new Date().toISOString()
-                });
-                added += 1;
-              }
-            } catch (error) {
-              console.error('Error merging item', item.assetId, error);
-            }
+    const processFile = async () => {
+      try {
+        let jsonData = [];
+        
+        if (file.name.endsWith('.csv')) {
+          // Parse CSV manually
+          const text = await file.text();
+          const lines = text.split('\n').filter(line => line.trim());
+          if (lines.length === 0) throw new Error('Empty file');
+          
+          const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+          
+          for (let i = 1; i < lines.length; i++) {
+            const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+            const row = {};
+            headers.forEach((header, idx) => {
+              row[header] = values[idx] || '';
+            });
+            jsonData.push(row);
           }
-
-          setShowImportModal(false);
-          alert(`Import complete.\n\nAdded: ${added}\nUpdated: ${updated}\n\nNo existing photos, logs, or inspection history were removed.`);
-        } catch (error) {
-          alert('Error reading file. Please make sure it is a valid CSV or Excel file.');
-          console.error(error);
+        } else {
+          // Parse Excel file
+          const workbook = new ExcelJS.Workbook();
+          const arrayBuffer = await file.arrayBuffer();
+          await workbook.xlsx.load(arrayBuffer);
+          
+          const worksheet = workbook.worksheets[0];
+          
+          // Convert worksheet to JSON
+          const headers = [];
+          worksheet.getRow(1).eachCell((cell) => {
+            headers.push(cell.value);
+          });
+          
+          worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber === 1) return; // Skip header row
+            const rowData = {};
+            row.eachCell((cell, colNumber) => {
+              rowData[headers[colNumber - 1]] = cell.value;
+            });
+            jsonData.push(rowData);
+          });
         }
-      };
+        
+        // Prepare a local index of existing extinguishers by Asset ID (string)
+        // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
+        const existingIndex = new Map(
+          (extinguishers || [])
+            .filter(x => x && x.assetId)
+            .map(x => [String(x.assetId), x])
+        );
 
-      processFile();
+        // Normalize and parse incoming rows; allow a Section column to override the dropdown
+        const parsed = jsonData
+          .map((row) => {
+            const assetIdRaw = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || row['assetId'] || row['ID'] || '';
+            const assetId = String(assetIdRaw || '').trim();
+            if (!assetId) return null;
+
+            const vicinity = String(row['Vicinity'] || row['vicinity'] || '').trim();
+            const serial = String(row['Serial'] || row['serial'] || '').trim();
+            const parentLocation = String(row['Parent Location'] || row['Parent\nLocation'] || row['parentLocation'] || '').trim();
+            const sectionFromRow = row['Section'] || row['SECTION'] || row['section'] || row['Building'] || row['Area'] || null;
+            const resolvedSection = sectionFromRow ? String(sectionFromRow).trim() : importSection;
+
+            return {
+              assetId,
+              vicinity,
+              serial,
+              parentLocation,
+              section: resolvedSection,
+            };
+          })
+          .filter(Boolean);
+
+        let added = 0;
+        let updated = 0;
+
+        // Merge: update existing by assetId; add new otherwise. Never delete or overwrite photos/history.
+        for (const item of parsed) {
+          const existing = existingIndex.get(item.assetId);
+          try {
+            if (existing) {
+              const docRef = doc(db, 'extinguishers', existing.id);
+              await updateDoc(docRef, {
+                vicinity: item.vicinity,
+                serial: item.serial,
+                parentLocation: item.parentLocation,
+                section: item.section,
+                // Intentionally do NOT touch: status, notes, photos, inspectionHistory, lastInspection*
+                updatedAt: new Date().toISOString()
+              });
+              updated += 1;
+            } else {
+              await addDoc(collection(db, 'extinguishers'), {
+                assetId: item.assetId,
+                vicinity: item.vicinity,
+                serial: item.serial,
+                parentLocation: item.parentLocation,
+                section: item.section,
+                status: 'pending',
+                checkedDate: null,
+                notes: '',
+                inspectionHistory: [],
+                userId: user.uid,
+                workspaceId: currentWorkspaceId,
+                createdAt: new Date().toISOString()
+              });
+              added += 1;
+            }
+          } catch (error) {
+            console.error('Error merging item', item.assetId, error);
+          }
+        }
+
+        setShowImportModal(false);
+        alert(`Import complete.\n\nAdded: ${added}\nUpdated: ${updated}\n\nNo existing photos, logs, or inspection history were removed.`);
+      } catch (error) {
+        alert('Error reading file. Please make sure it is a valid CSV or Excel file.');
+        console.error(error);
+      }
     };
 
-    reader.readAsArrayBuffer(file);
+    processFile();
     e.target.value = null;
   };
 
@@ -1844,19 +1896,60 @@ function App() {
   };
 
   const exportData = (options = exportOptions) => {
-    const { type, includePhotos, includeGPS, includeChecklist, includeInspectionHistory } = options;
+    const { type, includePhotos, includeGPS, includeChecklist, includeInspectionHistory, includeMaintenanceDates } = options;
 
     let dataToExport;
+    let typeLabel;
 
+    // Filter data based on export type
     if (type === 'passed') {
       dataToExport = extinguishers.filter(e => e.status === 'pass');
+      typeLabel = 'Passed';
     } else if (type === 'failed') {
       dataToExport = extinguishers.filter(e => e.status === 'fail');
+      typeLabel = 'Failed';
+    } else if (type === 'notes-only') {
+      // Only export items that have notes
+      dataToExport = extinguishers.filter(e => e.notes && e.notes.trim() !== '');
+      typeLabel = 'Notes';
+    } else if (type === 'atg-serial-dates') {
+      // Export all items but only specific columns
+      dataToExport = extinguishers;
+      typeLabel = 'ATG_Serial_Dates';
+    } else if (type === 'pending') {
+      dataToExport = extinguishers.filter(e => e.status === 'pending');
+      typeLabel = 'Pending';
     } else {
       dataToExport = extinguishers;
+      typeLabel = 'All';
     }
 
     const formatted = dataToExport.map(item => {
+      // For ATG/Serial/Maintenance export - simplified asset list
+      if (type === 'atg-serial-dates') {
+        return {
+          'Asset ID (ATG)': item.assetId,
+          'Serial': item.serial,
+          'Vicinity': item.vicinity,
+          'Section': item.section,
+          'Mfg Year / 6-Year / Hydro': item.manufactureYear || ''
+        };
+      }
+
+      // For Notes Only export, focus on notes
+      if (type === 'notes-only') {
+        return {
+          'Asset ID': item.assetId,
+          'Serial': item.serial,
+          'Section': item.section,
+          'Vicinity': item.vicinity,
+          'Status': item.status.toUpperCase(),
+          'Notes': item.notes || '',
+          'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : ''
+        };
+      }
+
+      // Standard full export
       const baseData = {
         'Asset ID': item.assetId,
         'Serial': item.serial,
@@ -1867,6 +1960,11 @@ function App() {
         'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
         'Notes': item.notes || ''
       };
+
+      // Add maintenance/manufacture dates if requested
+      if (includeMaintenanceDates) {
+        baseData['Mfg Year / 6-Year / Hydro'] = item.manufactureYear || '';
+      }
 
       // Add GPS data if requested
       if (includeGPS) {
@@ -1939,16 +2037,37 @@ function App() {
       return baseData;
     });
 
-    // Generate filename with current month/year and current date
+    // Generate filename with CURRENT month's name (not previous month)
     const now = new Date();
-    const { monthName, year } = getWorkspaceMonthInfo();
+    const monthName = now.toLocaleDateString('en-US', { month: 'long' });
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
-    const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
 
-    const ws = XLSX.utils.json_to_sheet(formatted);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Inspections');
-    XLSX.writeFile(wb, `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Inspections');
+    
+    // Get column headers from first row
+    if (formatted.length > 0) {
+      const headers = Object.keys(formatted[0]);
+      worksheet.addRow(headers);
+      
+      // Add data rows
+      formatted.forEach(row => {
+        worksheet.addRow(Object.values(row));
+      });
+    }
+    
+    // Write to file
+    workbook.xlsx.writeBuffer().then(buffer => {
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${monthName}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
   };
 
   const exportTimeData = () => {
@@ -1962,15 +2081,37 @@ function App() {
       'Section Notes': sectionNotes[section]?.notes || ''
     }));
 
-    // Generate filename with current month/year and current date
+    // Generate filename with CURRENT month's name and timestamp
     const now = new Date();
-    const { monthName, year } = getWorkspaceMonthInfo();
+    const monthName = now.toLocaleDateString('en-US', { month: 'long' });
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-    const ws = XLSX.utils.json_to_sheet(timeData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Time Tracking');
-    XLSX.writeFile(wb, `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Time Tracking');
+    
+    // Add headers and data if timeData is not empty
+    if (timeData.length > 0) {
+      const headers = Object.keys(timeData[0]);
+      worksheet.addRow(headers);
+      
+      // Add data rows
+      timeData.forEach(row => {
+        worksheet.addRow(Object.values(row));
+      });
+    }
+    
+    // Write to file
+    workbook.xlsx.writeBuffer().then(buffer => {
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${monthName}_Time_Tracking_${timestamp}_Export.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
   };
 
   // Device Sync Export - exports everything needed to sync to another device
@@ -3946,6 +4087,34 @@ function App() {
               )}
             </div>
 
+            {/* Mfg Year / 6-Year / Hydro field */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Mfg Year / 6-Year / Hydro Test
+              </label>
+              <input
+                type="text"
+                value={selectedItem.manufactureYear || ''}
+                onChange={async (e) => {
+                  const newValue = e.target.value;
+                  setSelectedItem({ ...selectedItem, manufactureYear: newValue });
+                }}
+                onBlur={async (e) => {
+                  const newValue = e.target.value.trim();
+                  try {
+                    const docRef = doc(db, 'extinguishers', selectedItem.id);
+                    await updateDoc(docRef, { manufactureYear: newValue });
+                  } catch (err) {
+                    console.error('Error saving manufacture year:', err);
+                    alert('Error saving. Please try again.');
+                  }
+                }}
+                placeholder="e.g., 2019 / 6yr: 2025 / Hydro: 2031"
+                className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500"
+              />
+              <div className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year service date, or hydrostatic test date</div>
+            </div>
+
             {/* Notes always visible */}
             <div className="space-y-4">
               <div>
@@ -4548,8 +4717,20 @@ function App() {
                   <option value="all">All Extinguishers</option>
                   <option value="passed">Passed Only</option>
                   <option value="failed">Failed Only</option>
+                  <option value="pending">Pending Only</option>
+                  <option value="notes-only">Notes Only (items with notes)</option>
+                  <option value="atg-serial-dates">ATG + Serial + Dates Only</option>
                 </select>
               </div>
+
+              {/* Note about specialized exports */}
+              {(exportOptions.type === 'notes-only' || exportOptions.type === 'atg-serial-dates') && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+                  {exportOptions.type === 'notes-only'
+                    ? 'This will export only items that have notes, with columns: Asset ID, Serial, Section, Vicinity, Status, Notes, Checked Date'
+                    : 'This will export a simplified list with columns: Asset ID (ATG), Serial, Vicinity, Section, Mfg Year / 6-Year / Hydro'}
+                </div>
+              )}
 
               {/* Include Options */}
               <div className="border-t pt-3">
@@ -4596,6 +4777,16 @@ function App() {
                       className="mr-2 h-4 w-4"
                     />
                     <span className="text-sm">Full Inspection History</span>
+                  </label>
+
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeMaintenanceDates}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includeMaintenanceDates: e.target.checked })}
+                      className="mr-2 h-4 w-4"
+                    />
+                    <span className="text-sm">Mfg Year / 6-Year / Hydro Test Dates</span>
                   </label>
                 </div>
               </div>
