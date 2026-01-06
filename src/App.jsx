@@ -1424,13 +1424,14 @@ function App() {
           firstSheet.eachRow((row, rowNumber) => {
             if (rowNumber === 1) return; // Skip header row
             const rowData = {};
-            row.eachCell((cell, colNumber) => {
+            row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
               const header = headers[colNumber];
               if (header) {
                 rowData[header] = cell.value;
               }
             });
-            if (Object.keys(rowData).length > 0) {
+            // Only add rows that have at least one non-empty value
+            if (Object.values(rowData).some(value => value !== null && value !== undefined && String(value).trim() !== '')) {
               jsonData.push(rowData);
             }
           });
