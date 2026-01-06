@@ -1414,8 +1414,8 @@ function App() {
           const firstSheet = workbook.worksheets[0];
           const jsonData = [];
           
-          // Get headers from first row
-          const headers = [];
+          // Get headers from first row (using object to avoid 1-based indexing confusion)
+          const headers = {};
           firstSheet.getRow(1).eachCell((cell, colNumber) => {
             headers[colNumber] = cell.value;
           });
@@ -1430,7 +1430,9 @@ function App() {
                 rowData[header] = cell.value;
               }
             });
-            jsonData.push(rowData);
+            if (Object.keys(rowData).length > 0) {
+              jsonData.push(rowData);
+            }
           });
           
           // Prepare a local index of existing extinguishers by Asset ID (string)
@@ -2006,6 +2008,9 @@ function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }).catch(error => {
+      console.error('Error exporting data:', error);
+      alert('Failed to export data. Please try again.');
     });
   };
 
@@ -2047,6 +2052,9 @@ function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }).catch(error => {
+      console.error('Error exporting time data:', error);
+      alert('Failed to export time data. Please try again.');
     });
   };
 
