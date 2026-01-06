@@ -42,7 +42,18 @@ function App() {
   const [inspectionLogs, setInspectionLogs] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedItemNotes, setSelectedItemNotes] = useState('');
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const notesSaveTimeoutRef = useRef(null);
   const [editItem, setEditItem] = useState(null);
+  const [replaceItem, setReplaceItem] = useState(null);
+  const [replaceForm, setReplaceForm] = useState({
+    assetId: '',
+    serial: '',
+    reason: '',
+    manufactureDate: '',
+    notes: ''
+  });
   const [showMenu, setShowMenu] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSection, setImportSection] = useState('Main Hospital');
@@ -53,7 +64,8 @@ function App() {
     serial: '',
     vicinity: '',
     parentLocation: '',
-    section: 'Main Hospital'
+    section: 'Main Hospital',
+    category: 'standard'
   });
   const [newItemPhoto, setNewItemPhoto] = useState(null);
   const [newItemGps, setNewItemGps] = useState(null);
@@ -70,6 +82,7 @@ function App() {
   const [showSectionNotesModal, setShowSectionNotesModal] = useState(false);
   const [currentSectionNote, setCurrentSectionNote] = useState('');
   const [noteSelectedSection, setNoteSelectedSection] = useState('Main Hospital');
+  const [saveNoteForNextMonth, setSaveNoteForNextMonth] = useState(false);
 
   // Export options state
   const [showExportModal, setShowExportModal] = useState(false);
@@ -99,11 +112,154 @@ function App() {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncImporting, setSyncImporting] = useState(false);
 
+  // Quick lists modals
+  const [showStatusList, setShowStatusList] = useState(null); // { status: 'pass'|'fail', scope: 'section'|'all' }
+  const [showCategoryList, setShowCategoryList] = useState(null); // { category: 'spare'|'replaced' }
+  const statusPressTimerRef = useRef(null);
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const dbBackupInputRef = useRef(null);
   const syncFileInputRef = useRef(null);
   const timerIntervalRef = useRef(null);
+
+  // Duplicate cleanup state
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateGroups, setDuplicateGroups] = useState([]); // [{ assetId, keep, remove }]
+  const [duplicateScanRunning, setDuplicateScanRunning] = useState(false);
+  const [duplicateFixRunning, setDuplicateFixRunning] = useState(false);
+
+  const normalizeStatus = (s) => String(s || '').toLowerCase();
+  const pickPreferredDoc = (a, b) => {
+    // Returns the preferred doc between a and b using the same rules as list dedupe
+    const as = normalizeStatus(a.status);
+    const bs = normalizeStatus(b.status);
+    const acd = a.checkedDate ? new Date(a.checkedDate).getTime() : 0;
+    const bcd = b.checkedDate ? new Date(b.checkedDate).getTime() : 0;
+    const acr = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bcr = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (as === 'pending' && bs !== 'pending') return b;
+    if (as !== 'pending' && bs === 'pending') return a;
+    if (as !== 'pending' && bs !== 'pending') return (bcd >= acd) ? b : a;
+    return (bcr >= acr) ? b : a;
+  };
+
+  const computeDuplicateGroups = () => {
+    const groupsMap = new Map();
+    for (const e of extinguishers) {
+      const key = String(e.assetId || '').trim();
+      if (!key) continue;
+      const arr = groupsMap.get(key) || [];
+      arr.push(e);
+      groupsMap.set(key, arr);
+    }
+    const groups = [];
+    for (const [assetId, arr] of groupsMap.entries()) {
+      if (arr.length <= 1) continue;
+      // choose keep doc
+      let keep = arr[0];
+      for (let i = 1; i < arr.length; i++) keep = pickPreferredDoc(keep, arr[i]);
+      const remove = arr.filter(x => x.id !== keep.id);
+      groups.push({ assetId, keep, remove });
+    }
+    return groups.sort((a, b) => String(a.assetId).localeCompare(String(b.assetId)));
+  };
+
+  const openDuplicateCleanup = () => {
+    setDuplicateScanRunning(true);
+    try {
+      const groups = computeDuplicateGroups();
+      setDuplicateGroups(groups);
+      setShowDuplicateModal(true);
+      if (groups.length === 0) {
+        alert('No duplicates found in the current month.');
+        setShowDuplicateModal(false);
+      }
+    } finally {
+      setDuplicateScanRunning(false);
+    }
+  };
+
+  const mergeHistories = (docs) => {
+    const all = [];
+    for (const d of docs) {
+      const hist = Array.isArray(d.inspectionHistory) ? d.inspectionHistory : [];
+      for (const h of hist) {
+        if (h && h.date) all.push(h);
+      }
+    }
+    // sort by date asc then dedupe by date+status+notes
+    all.sort((x, y) => new Date(x.date) - new Date(y.date));
+    const seen = new Set();
+    const uniq = [];
+    for (const h of all) {
+      const key = `${h.date}|${h.status}|${h.notes || ''}|${h.photoUrl || ''}`;
+      if (!seen.has(key)) { uniq.push(h); seen.add(key); }
+    }
+    return uniq;
+  };
+
+  const chooseLatestNonNull = (docs, field, dateField = 'checkedDate') => {
+    let best = null;
+    let bestDate = -1;
+    for (const d of docs) {
+      const val = d[field];
+      if (val) {
+        const t = d[dateField] ? new Date(d[dateField]).getTime() : 0;
+        if (t >= bestDate) { best = val; bestDate = t; }
+      }
+    }
+    return best;
+  };
+
+  const runDuplicateCleanup = async () => {
+    if (!user || !currentWorkspaceId) { alert('Please sign in and select a workspace.'); return; }
+    if (!duplicateGroups || duplicateGroups.length === 0) { setShowDuplicateModal(false); return; }
+    const confirm = window.confirm(`This will merge and remove ${duplicateGroups.reduce((n,g)=>n+g.remove.length,0)} duplicate records across ${duplicateGroups.length} Asset IDs. Continue?`);
+    if (!confirm) return;
+    setDuplicateFixRunning(true);
+    try {
+      for (const group of duplicateGroups) {
+        const { keep, remove } = group;
+        const docs = [keep, ...remove];
+        // Merge collections
+        const mergedHistory = mergeHistories(docs);
+        const mergedPhotos = [];
+        for (const d of docs) {
+          if (Array.isArray(d.photos)) {
+            for (const p of d.photos) { if (p && p.url) mergedPhotos.push(p); }
+          }
+        }
+        // Place keep's photos first
+        const keepPhotos = Array.isArray(keep.photos) ? keep.photos : [];
+        const otherPhotos = mergedPhotos.filter(p => !keepPhotos.find(kp => kp.url === p.url));
+        const finalPhotos = [...keepPhotos, ...otherPhotos];
+
+        const finalLastPhoto = chooseLatestNonNull(docs, 'lastInspectionPhotoUrl', 'checkedDate') || keep.lastInspectionPhotoUrl || null;
+        const finalLastGps = chooseLatestNonNull(docs, 'lastInspectionGps', 'checkedDate') || keep.lastInspectionGps || null;
+
+        const keepRef = doc(db, 'extinguishers', keep.id);
+        await setDoc(keepRef, {
+          photos: finalPhotos,
+          inspectionHistory: mergedHistory,
+          lastInspectionPhotoUrl: finalLastPhoto || null,
+          lastInspectionGps: finalLastGps || null
+        }, { merge: true });
+
+        // Delete others
+        for (const r of remove) {
+          try { await deleteDoc(doc(db, 'extinguishers', r.id)); } catch (e) { console.warn('Delete failed for duplicate', r.id, e); }
+        }
+      }
+      alert('Duplicate cleanup complete. Lists will refresh momentarily.');
+      setShowDuplicateModal(false);
+    } catch (e) {
+      console.error('Duplicate cleanup failed:', e);
+      alert(`Duplicate cleanup failed: ${e.message}`);
+    } finally {
+      setDuplicateFixRunning(false);
+    }
+  };
 
   // Authentication listener
   useEffect(() => {
@@ -198,37 +354,73 @@ function App() {
           localStorage.setItem(`currentWorkspace_${user.uid}`, sorted[0].id);
         }
       }
+    }, (error) => {
+      console.error('Firebase workspaces listener error:', error.code, error.message);
+      alert(`Firebase connection error: ${error.code}\n${error.message}\n\nPlease check your internet connection or try logging out and back in.`);
     });
 
     return () => unsubscribeWorkspaces();
   }, [user]);
 
-  // Load extinguishers filtered by current workspace (or all if no workspace)
+  // Load extinguishers - show ALL extinguishers regardless of workspaceId
   useEffect(() => {
     if (!user) {
       setExtinguishers([]);
       return;
     }
 
-    // Load extinguishers from Firestore - filter by workspace if available, otherwise load all
-    const extinguishersQuery = currentWorkspaceId
-      ? query(
-          collection(db, 'extinguishers'),
-          where('userId', '==', user.uid),
-          where('workspaceId', '==', currentWorkspaceId)
-        )
-      : query(
-          collection(db, 'extinguishers'),
-          where('userId', '==', user.uid)
-        );
+    // Load ALL extinguishers for user - no workspace filtering
+    const extinguishersQuery = query(
+      collection(db, 'extinguishers'),
+      where('userId', '==', user.uid)
+    );
+
+    const normalizeStatus = (s) => String(s || '').toLowerCase();
+    const dedupeExtinguishers = (items) => {
+      const byAsset = new Map();
+      for (const it of items) {
+        const key = String(it.assetId || it.id || '').trim();
+        if (!key) continue;
+        const prev = byAsset.get(key);
+        if (!prev) {
+          byAsset.set(key, it);
+          continue;
+        }
+        const prevStatus = normalizeStatus(prev.status);
+        const currStatus = normalizeStatus(it.status);
+        const prevChecked = prev.checkedDate ? new Date(prev.checkedDate).getTime() : 0;
+        const currChecked = it.checkedDate ? new Date(it.checkedDate).getTime() : 0;
+        const prevCreated = prev.createdAt ? new Date(prev.createdAt).getTime() : 0;
+        const currCreated = it.createdAt ? new Date(it.createdAt).getTime() : 0;
+
+        // Prefer non-pending over pending
+        const prevIsPending = prevStatus === 'pending';
+        const currIsPending = currStatus === 'pending';
+        let chooseCurr = false;
+        if (prevIsPending && !currIsPending) {
+          chooseCurr = true;
+        } else if (!prevIsPending && currIsPending) {
+          chooseCurr = false;
+        } else if (!prevIsPending && !currIsPending) {
+          // Both checked: choose newer checkedDate
+          chooseCurr = currChecked >= prevChecked;
+        } else {
+          // Both pending: choose newer createdAt
+          chooseCurr = currCreated >= prevCreated;
+        }
+
+        if (chooseCurr) byAsset.set(key, it);
+      }
+      return Array.from(byAsset.values());
+    };
 
     const unsubscribeExtinguishers = onSnapshot(extinguishersQuery, (snapshot) => {
-      console.log('Extinguishers snapshot received:', snapshot.docs.length, 'items for workspace:', currentWorkspaceId);
-      const extinguisherData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const raw = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const extinguisherData = dedupeExtinguishers(raw);
       setExtinguishers(extinguisherData);
+    }, (error) => {
+      console.error('Firebase extinguishers listener error:', error.code, error.message);
+      alert(`Firebase error loading extinguishers: ${error.code}\n${error.message}`);
     });
 
     // Load section times from localStorage scoped to workspace
@@ -263,10 +455,13 @@ function App() {
         notesData[data.section] = {
           id: doc.id,
           notes: data.notes || '',
-          lastUpdated: data.lastUpdated
+          lastUpdated: data.lastUpdated,
+          saveForNextMonth: data.saveForNextMonth || false
         };
       });
       setSectionNotes(notesData);
+    }, (error) => {
+      console.error('Firebase section notes listener error:', error.code, error.message);
     });
 
     return () => unsubscribeSectionNotes();
@@ -383,6 +578,30 @@ function App() {
     return { total, passed, failed, pending };
   };
 
+  // Helper: month name + year derived from the selected workspace (fallback to current month)
+  const getWorkspaceMonthInfo = () => {
+    const ws = getCurrentWorkspace();
+    try {
+      if (ws?.monthYear) {
+        const [yy, mm] = String(ws.monthYear).split('-').map(Number);
+        if (yy && mm) {
+          const d = new Date(yy, mm - 1, 1);
+          return {
+            monthName: d.toLocaleDateString('en-US', { month: 'long' }),
+            year: yy
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to derive month from workspace:', ws?.monthYear, e);
+    }
+    const now = new Date();
+    return {
+      monthName: now.toLocaleDateString('en-US', { month: 'long' }),
+      year: now.getFullYear()
+    };
+  };
+
   const switchWorkspace = (workspaceId) => {
     if (workspaceId !== currentWorkspaceId) {
       // Stop any active timer before switching
@@ -411,7 +630,8 @@ function App() {
 
       const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
 
-      // If copying from another workspace, copy all extinguishers with pending status
+      // If copying from another workspace, copy all extinguishers and reset them to pending
+      // This ensures a fresh start for the new month with all extinguishers at 0% complete
       if (copyFrom) {
         const sourceQuery = query(
           collection(db, 'extinguishers'),
@@ -430,18 +650,52 @@ function App() {
             vicinity: data.vicinity || '',
             parentLocation: data.parentLocation || '',
             section: data.section,
-            status: 'pending',
-            checkedDate: null,
-            notes: '',
-            inspectionHistory: [],
+            category: data.category || 'standard',
+            status: 'pending', // Always reset to pending for new month
+            checkedDate: null, // Clear checked date
+            notes: '', // Clear notes
+            inspectionHistory: data.inspectionHistory || [], // Keep history
             userId: user.uid,
             workspaceId: wsDoc.id,
             createdAt: now.toISOString(),
             photoUrl: data.photoUrl || null,
-            location: data.location || null
+            location: data.location || null,
+            photos: data.photos || [],
+            lastInspectionPhotoUrl: null,
+            lastInspectionGps: null
           });
         });
         await batch.commit();
+      }
+
+      // Clear section notes for new workspace (unless marked to save)
+      try {
+        const notesQuery = query(
+          collection(db, 'sectionNotes'),
+          where('userId', '==', user.uid)
+        );
+        const notesSnap = await getDocs(notesQuery);
+        const notesBatch = writeBatch(db);
+        notesSnap.docs.forEach(noteDoc => {
+          const noteData = noteDoc.data();
+          // Only clear notes that are NOT marked to save for next month
+          if (!noteData.saveForNextMonth) {
+            notesBatch.update(noteDoc.ref, {
+              notes: '',
+              lastUpdated: now.toISOString()
+            });
+          } else {
+            // Clear the flag after using it
+            notesBatch.update(noteDoc.ref, {
+              saveForNextMonth: false,
+              lastUpdated: now.toISOString()
+            });
+          }
+        });
+        await notesBatch.commit();
+      } catch (notesError) {
+        console.warn('Could not clear section notes for new workspace:', notesError);
+        // Non-critical, continue
       }
 
       setShowCreateWorkspace(false);
@@ -601,7 +855,42 @@ function App() {
   // Keep the modal notes field in sync with the selected item
   useEffect(() => {
     setSelectedItemNotes(selectedItem?.notes || '');
+    setNotesSaved(false);
   }, [selectedItem]);
+
+  // Auto-save notes with debouncing
+  useEffect(() => {
+    if (!selectedItem || !selectedItemNotes) return;
+    
+    // Clear existing timeout
+    if (notesSaveTimeoutRef.current) {
+      clearTimeout(notesSaveTimeoutRef.current);
+    }
+
+    // Set new timeout for debounced save
+    notesSaveTimeoutRef.current = setTimeout(async () => {
+      if (selectedItem && selectedItemNotes !== (selectedItem.notes || '')) {
+        setNotesSaving(true);
+        setNotesSaved(false);
+        try {
+          await handleSaveNotes(selectedItem, selectedItemNotes);
+          setNotesSaved(true);
+          setTimeout(() => setNotesSaved(false), 2000); // Hide "Saved" message after 2s
+        } catch (error) {
+          console.error('Auto-save failed:', error);
+        } finally {
+          setNotesSaving(false);
+        }
+      }
+    }, 2000); // 2 second debounce
+
+    // Cleanup on unmount or when selectedItem changes
+    return () => {
+      if (notesSaveTimeoutRef.current) {
+        clearTimeout(notesSaveTimeoutRef.current);
+      }
+    };
+  }, [selectedItemNotes, selectedItem]);
 
   const saveData = async (newData) => {
     // Firestore handles the state updates through onSnapshot
@@ -650,12 +939,11 @@ function App() {
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const now = new Date();
-      const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-      const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+      const { monthName, year } = getWorkspaceMonthInfo();
       const timestamp = now.toISOString().replace(/[:.]/g, '-');
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${monthName}_Database_Backup_${timestamp}.json`;
+      a.download = `${monthName}_${year}_Database_Backup_${timestamp}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -693,6 +981,7 @@ function App() {
       });
       
       const now = new Date();
+      const { monthName, year } = getWorkspaceMonthInfo();
       const date = now.toISOString().split('T')[0];
       
       // Write to CSV
@@ -1253,10 +1542,17 @@ function App() {
       // optional photo upload
       let assetPhotoUrl = null;
       if (newItemPhoto instanceof File) {
-        const path = `assets/${newItem.assetId.trim()}/${Date.now()}_${newItemPhoto.name}`;
-        const sref = storageRef(storage, path);
-        const snap = await uploadBytes(sref, newItemPhoto, { contentType: newItemPhoto.type });
-        assetPhotoUrl = await getDownloadURL(snap.ref);
+        try {
+          const safeSeg = String(newItem.assetId || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const safeName = newItemPhoto.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const path = `assets/${user.uid}/${safeSeg}/${Date.now()}_${safeName}`;
+          const sref = storageRef(storage, path);
+          const snap = await uploadBytes(sref, newItemPhoto, { contentType: newItemPhoto.type });
+          assetPhotoUrl = await getDownloadURL(snap.ref);
+        } catch (uploadErr) {
+          console.warn('Asset photo upload failed; continuing without photo:', uploadErr);
+          assetPhotoUrl = null;
+        }
       }
 
       const item = {
@@ -1265,6 +1561,7 @@ function App() {
         serial: newItem.serial.trim(),
         parentLocation: newItem.parentLocation.trim(),
         section: newItem.section,
+        category: newItem.category || 'standard',
         status: 'pending',
         checkedDate: null,
         notes: '',
@@ -1283,7 +1580,8 @@ function App() {
         serial: '',
         vicinity: '',
         parentLocation: '',
-        section: 'Main Hospital'
+        section: 'Main Hospital',
+        category: 'standard'
       });
       setNewItemPhoto(null);
       setNewItemGps(null);
@@ -1295,13 +1593,14 @@ function App() {
   };
 
   const handleInspection = async (item, status, notes = '', inspectionData = null) => {
+    console.log('handleInspection called:', { itemId: item?.id, assetId: item?.assetId, status });
     try {
       let photoUrl = null;
       if (inspectionData?.photo instanceof File) {
         try {
           const file = inspectionData.photo;
           const safeSeg = String(item.assetId || item.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
-          const path = `inspections/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const path = `inspections/${user.uid}/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
           const sref = storageRef(storage, path);
           const snapshot = await uploadBytes(sref, file, { contentType: file.type });
           photoUrl = await getDownloadURL(snapshot.ref);
@@ -1321,7 +1620,11 @@ function App() {
       };
 
       const docRef = doc(db, 'extinguishers', item.id);
-      await updateDoc(docRef, {
+      // Exclude 'id' from spread since it's the document path, not a field
+      const { id: _id, ...itemData } = item;
+      await setDoc(docRef, {
+        ...itemData,
+        userId: user.uid,
         status,
         checkedDate: new Date().toISOString(),
         notes,
@@ -1329,8 +1632,23 @@ function App() {
         lastInspectionPhotoUrl: photoUrl || null,
         lastInspectionGps: gps || null,
         inspectionHistory: [...(item.inspectionHistory || []), inspection]
-      });
-
+      }, { merge: true });
+      console.log('Inspection saved successfully for:', item.assetId);
+      // Optimistically update local state so lists/counters reflect immediately
+      const nowIso = new Date().toISOString();
+      setExtinguishers(prev => prev.map(e => {
+        if (!e || e.id !== item.id) return e;
+        return {
+          ...e,
+          status,
+          checkedDate: nowIso,
+          notes,
+          checklistData: inspectionData?.checklistData || e.checklistData,
+          lastInspectionPhotoUrl: photoUrl || e.lastInspectionPhotoUrl || null,
+          lastInspectionGps: gps || e.lastInspectionGps || null,
+          inspectionHistory: [...(e.inspectionHistory || []), inspection]
+        };
+      }));
       setSelectedItem(null);
     } catch (error) {
       console.error('Error updating inspection:', { code: error?.code, message: error?.message });
@@ -1432,14 +1750,15 @@ function App() {
 
     try {
       const docRef = doc(db, 'extinguishers', editItem.id);
-      await updateDoc(docRef, {
+      await setDoc(docRef, {
         assetId: editItem.assetId,
         vicinity: editItem.vicinity,
         serial: editItem.serial,
         parentLocation: editItem.parentLocation,
         section: editItem.section,
+        category: editItem.category || 'standard',
         location: editItem.location || null
-      });
+      }, { merge: true });
 
       // Update selectedItem if it's the same item being edited
       if (selectedItem && selectedItem.id === editItem.id) {
@@ -1470,15 +1789,109 @@ function App() {
   const resetStatus = async (item) => {
     try {
       const docRef = doc(db, 'extinguishers', item.id);
-      await updateDoc(docRef, {
+      await setDoc(docRef, {
         status: 'pending',
         checkedDate: null,
         notes: ''
-      });
+      }, { merge: true });
       setSelectedItem(null);
     } catch (error) {
       console.error('Error resetting status:', error);
       alert('Error resetting status. Please try again.');
+    }
+  };
+
+  const handleReplaceExtinguisher = async (oldItem, replacementData) => {
+    try {
+      const { assetId, serial, reason, manufactureDate, notes } = replacementData;
+      
+      if (!serial || !serial.trim()) {
+        alert('Serial number is required for replacement.');
+        return;
+      }
+
+      // Check if serial is different
+      if (serial.trim() === (oldItem.serial || '').trim()) {
+        alert('New serial number must be different from the old serial number.');
+        return;
+      }
+
+      const replacementDate = new Date().toISOString();
+      const replacementRecord = {
+        date: replacementDate,
+        oldSerial: oldItem.serial || '',
+        newSerial: serial.trim(),
+        reason: reason.trim() || '',
+        newManufactureDate: manufactureDate.trim() || '',
+        notes: notes.trim() || '',
+        replacedBy: user?.email || 'Current User',
+        oldAssetId: oldItem.assetId
+      };
+
+      // Create new extinguisher record
+      const newExtinguisherData = {
+        assetId: assetId.trim() || oldItem.assetId,
+        serial: serial.trim(),
+        vicinity: oldItem.vicinity || '',
+        parentLocation: oldItem.parentLocation || '',
+        section: oldItem.section || 'Main Hospital',
+        status: 'pending',
+        checkedDate: null,
+        notes: notes.trim() || '',
+        manufactureYear: manufactureDate.trim() || '',
+        category: oldItem.category || 'standard',
+        location: oldItem.location || null,
+        userId: user.uid,
+        workspaceId: currentWorkspaceId,
+        createdAt: replacementDate,
+        inspectionHistory: [],
+        photos: [],
+        replacementHistory: []
+      };
+
+      const newDocRef = await addDoc(collection(db, 'extinguishers'), newExtinguisherData);
+      replacementRecord.newExtinguisherId = newDocRef.id;
+
+      // Update old extinguisher with replacement history
+      const oldDocRef = doc(db, 'extinguishers', oldItem.id);
+      const oldReplacementHistory = oldItem.replacementHistory || [];
+      await setDoc(oldDocRef, {
+        replacementHistory: [...oldReplacementHistory, replacementRecord]
+      }, { merge: true });
+
+      // Update local state
+      setExtinguishers(prev => {
+        const updated = prev.map(e => {
+          if (e.id === oldItem.id) {
+            return {
+              ...e,
+              replacementHistory: [...oldReplacementHistory, replacementRecord]
+            };
+          }
+          return e;
+        });
+        // Add new extinguisher to local state
+        updated.push({
+          ...newExtinguisherData,
+          id: newDocRef.id
+        });
+        return updated;
+      });
+
+      setReplaceItem(null);
+      setReplaceForm({
+        assetId: '',
+        serial: '',
+        reason: '',
+        manufactureDate: '',
+        notes: ''
+      });
+      setSelectedItem(null);
+      
+      alert(`Extinguisher replaced successfully!\n\nNew extinguisher created with Asset ID: ${newExtinguisherData.assetId}\nSerial: ${serial.trim()}`);
+    } catch (error) {
+      console.error('Error replacing extinguisher:', error);
+      alert(`Error replacing extinguisher: ${error.message}`);
     }
   };
 
@@ -1602,6 +2015,23 @@ function App() {
         baseData['Inspection History'] = item.inspectionHistory.map(h =>
           `${new Date(h.date).toLocaleDateString()} - ${h.status.toUpperCase()}${h.notes ? ': ' + h.notes : ''}`
         ).join(' | ');
+      }
+
+      // Add replacement history if available
+      if (item.replacementHistory && item.replacementHistory.length > 0) {
+        baseData['Replacement History Count'] = item.replacementHistory.length;
+        baseData['Replacement History'] = item.replacementHistory.map(r =>
+          `${new Date(r.date).toLocaleDateString()} - Old Serial: ${r.oldSerial || 'N/A'}, New Serial: ${r.newSerial || 'N/A'}${r.reason ? ', Reason: ' + r.reason : ''}${r.notes ? ', Notes: ' + r.notes : ''}`
+        ).join(' | ');
+        // Add most recent replacement details as separate columns
+        const latestReplacement = item.replacementHistory[item.replacementHistory.length - 1];
+        baseData['Last Replacement Date'] = latestReplacement.date ? new Date(latestReplacement.date).toLocaleDateString() : '';
+        baseData['Last Replacement Old Serial'] = latestReplacement.oldSerial || '';
+        baseData['Last Replacement New Serial'] = latestReplacement.newSerial || '';
+        baseData['Last Replacement Reason'] = latestReplacement.reason || '';
+        baseData['Last Replacement Manufacture Date'] = latestReplacement.newManufactureDate || '';
+        baseData['Last Replacement Notes'] = latestReplacement.notes || '';
+        baseData['Last Replaced By'] = latestReplacement.replacedBy || '';
       }
 
       return baseData;
@@ -1811,23 +2241,45 @@ function App() {
   };
 
   const clearAllData = async () => {
-    if (window.confirm('Are you sure you want to clear all data? This cannot be undone.')) {
-      // Delete all user's extinguishers from Firestore
+    if (!currentWorkspaceId) {
+      alert('Please select a workspace first.');
+      return;
+    }
+
+    const workspaceLabel = getCurrentWorkspace()?.label || 'current workspace';
+    if (!window.confirm(`Are you sure you want to clear all data for ${workspaceLabel}?\n\nThis will delete all extinguishers and data for this month only. Other months will not be affected.\n\nThis cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      // Delete only extinguishers from the current workspace
       const extinguishersQuery = query(
         collection(db, 'extinguishers'),
-        where('userId', '==', user.uid)
+        where('userId', '==', user.uid),
+        where('workspaceId', '==', currentWorkspaceId)
       );
 
       const snapshot = await getDocs(extinguishersQuery);
+      
+      if (snapshot.docs.length === 0) {
+        alert('No data found to clear in this workspace.');
+        return;
+      }
+
       const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
       await Promise.all(deletePromises);
 
-      // Clear local data
-      localStorage.removeItem(`sessionState_${user.uid}`);
-      localStorage.removeItem(`sectionTimes_${user.uid}`);
+      // Clear local data for this workspace only
+      localStorage.removeItem(`sessionState_${user.uid}_${currentWorkspaceId}`);
+      localStorage.removeItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`);
       setSelectedItem(null);
       setEditItem(null);
       setSectionTimes({});
+
+      alert(`Successfully cleared all data for ${workspaceLabel}.\n\n${snapshot.docs.length} extinguishers deleted.`);
+    } catch (error) {
+      console.error('Error clearing data:', error);
+      alert(`Error clearing data: ${error.message}`);
     }
   };
 
@@ -1844,6 +2296,7 @@ function App() {
     setNoteSelectedSection(selectedSection); // Start with current section
     const currentNote = sectionNotes[selectedSection]?.notes || '';
     setCurrentSectionNote(currentNote);
+    setSaveNoteForNextMonth(sectionNotes[selectedSection]?.saveForNextMonth || false);
     setShowSectionNotesModal(true);
   };
 
@@ -1851,6 +2304,7 @@ function App() {
     setNoteSelectedSection(section);
     const currentNote = sectionNotes[section]?.notes || '';
     setCurrentSectionNote(currentNote);
+    setSaveNoteForNextMonth(sectionNotes[section]?.saveForNextMonth || false);
   };
 
   const saveSectionNotes = async () => {
@@ -1861,6 +2315,7 @@ function App() {
         const docRef = doc(db, 'sectionNotes', existingNote.id);
         await updateDoc(docRef, {
           notes: currentSectionNote,
+          saveForNextMonth: saveNoteForNextMonth,
           lastUpdated: new Date().toISOString()
         });
       } else {
@@ -1875,6 +2330,7 @@ function App() {
           const docRef = found.docs[0].ref;
           await updateDoc(docRef, {
             notes: currentSectionNote,
+            saveForNextMonth: saveNoteForNextMonth,
             lastUpdated: new Date().toISOString()
           });
         } else {
@@ -1890,6 +2346,7 @@ function App() {
               userId: user.uid,
               section: noteSelectedSection,
               notes: currentSectionNote,
+              saveForNextMonth: saveNoteForNextMonth,
               lastUpdated: new Date().toISOString(),
               createdAt: new Date().toISOString()
             }, { merge: true });
@@ -1899,6 +2356,7 @@ function App() {
               userId: user.uid,
               section: noteSelectedSection,
               notes: currentSectionNote,
+              saveForNextMonth: saveNoteForNextMonth,
               lastUpdated: new Date().toISOString(),
               createdAt: new Date().toISOString()
             });
@@ -1907,6 +2365,7 @@ function App() {
       }
 
       setShowSectionNotesModal(false);
+      setSaveNoteForNextMonth(false);
       alert(`Notes for ${noteSelectedSection} saved successfully!`);
     } catch (error) {
       console.error('Error saving section notes:', { code: error?.code, message: error?.message, section: noteSelectedSection });
@@ -1927,13 +2386,23 @@ function App() {
 
   const countsForSection = (section) => {
     const list = extinguishers.filter(e => e.section === section);
-    const unchecked = list.filter(e => e.status === 'pending').length;
+    const unchecked = list.filter(e => String(e.status || '').toLowerCase() === 'pending').length;
     return { checked: list.length - unchecked, unchecked };
   };
 
   // helpers for SectionDetail actions
   const handlePass = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'pass', notesSummary, inspectionData);
   const handleFail = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'fail', notesSummary, inspectionData);
+  const handleOpenReplace = (item) => {
+    setReplaceItem(item);
+    setReplaceForm({
+      assetId: item.assetId || '',
+      serial: '',
+      reason: '',
+      manufactureDate: '',
+      notes: ''
+    });
+  };
   const handleSaveNotes = async (item, notesSummary, inspectionData = null) => {
     try {
       let photoUrl = null;
@@ -1941,7 +2410,7 @@ function App() {
         try {
           const file = inspectionData.photo;
           const safeSeg = String(item.assetId || item.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
-          const path = `inspections/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const path = `inspections/${user.uid}/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
           const sref = storageRef(storage, path);
           const snapshot = await uploadBytes(sref, file, { contentType: file.type });
           photoUrl = await getDownloadURL(snapshot.ref);
@@ -1963,7 +2432,18 @@ function App() {
       if (gps) {
         updates.lastInspectionGps = gps;
       }
-      await updateDoc(docRef, updates);
+      await setDoc(docRef, updates, { merge: true });
+      // Optimistically update local state for notes/checklist/photo/gps so UI reflects immediately
+      setExtinguishers(prev => prev.map(e => {
+        if (!e || e.id !== item.id) return e;
+        return {
+          ...e,
+          ...(typeof updates.notes !== 'undefined' ? { notes: updates.notes } : {}),
+          ...(typeof updates.checklistData !== 'undefined' ? { checklistData: updates.checklistData } : {}),
+          ...(typeof updates.lastInspectionPhotoUrl !== 'undefined' ? { lastInspectionPhotoUrl: updates.lastInspectionPhotoUrl } : {}),
+          ...(typeof updates.lastInspectionGps !== 'undefined' ? { lastInspectionGps: updates.lastInspectionGps } : {})
+        };
+      }));
     } catch (e) {
       console.error('Error saving notes:', { code: e?.code, message: e?.message });
       alert(`Error saving notes.\n\n${e?.code || ''} ${e?.message || ''}`.trim());
@@ -1975,13 +2455,15 @@ function App() {
     if (!asset || !file) return;
     const photos = asset.photos || [];
     if (photos.length >= 5) { alert('Photo limit reached (5 per asset).'); return; }
-    const path = `assets/${asset.assetId || asset.id}/${Date.now()}_${file.name}`;
+    const safeSeg = String(asset.assetId || asset.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `assets/${user.uid}/${safeSeg}/${Date.now()}_${safeName}`;
     const sref = storageRef(storage, path);
     const snap = await uploadBytes(sref, file, { contentType: file.type });
     const url = await getDownloadURL(snap.ref);
     const docRef = doc(db, 'extinguishers', asset.id);
     const next = [...photos, { url, uploadedAt: new Date().toISOString(), path }];
-    await updateDoc(docRef, { photos: next });
+    await setDoc(docRef, { photos: next }, { merge: true });
     setSelectedItem({ ...asset, photos: next });
   };
 
@@ -1990,7 +2472,7 @@ function App() {
     if (index <= 0 || index >= photos.length) return;
     const reordered = [photos[index], ...photos.slice(0, index), ...photos.slice(index + 1)];
     const docRef = doc(db, 'extinguishers', asset.id);
-    await updateDoc(docRef, { photos: reordered });
+    await setDoc(docRef, { photos: reordered }, { merge: true });
     setSelectedItem({ ...asset, photos: reordered });
   };
 
@@ -2000,7 +2482,7 @@ function App() {
     const removing = photos[index];
     const docRef = doc(db, 'extinguishers', asset.id);
     const next = photos.filter((_, i) => i !== index);
-    await updateDoc(docRef, { photos: next });
+    await setDoc(docRef, { photos: next }, { merge: true });
     // hard delete from storage (best-effort)
     try { if (removing.path) await deleteObject(storageRef(storage, removing.path)); } catch (e) { console.warn('Failed to delete storage object', e); }
     setSelectedItem({ ...asset, photos: next });
@@ -2082,12 +2564,12 @@ function App() {
       console.log('Starting to reset', snapshot.docs.length, 'extinguishers...');
       const updatePromises = snapshot.docs.map(docSnapshot => {
         const docRef = doc(db, 'extinguishers', docSnapshot.id);
-        return updateDoc(docRef, {
+        return setDoc(docRef, {
           status: 'pending',
           checkedDate: null,
           notes: '',
           lastMonthlyReset: currentDate
-        });
+        }, { merge: true });
       });
 
       await Promise.all(updatePromises);
@@ -2177,16 +2659,18 @@ function App() {
         let matchesView;
         if (selectedSection !== 'All') {
           const currentViewMode = getSectionViewMode(selectedSection);
+          const st = String(item.status || '').toLowerCase();
           if (currentViewMode === 'unchecked') {
-            matchesView = item.status === 'pending';
+            matchesView = st === 'pending';
           } else { // checked
-            matchesView = item.status === 'pass' || item.status === 'fail';
+            matchesView = st === 'pass' || st === 'fail';
           }
         } else {
           // For "All" sections, use the global view filter
-          matchesView = view === 'pending' ? item.status === 'pending' :
-                       view === 'pass' ? item.status === 'pass' :
-                       view === 'fail' ? item.status === 'fail' : true;
+          const st = String(item.status || '').toLowerCase();
+          matchesView = view === 'pending' ? st === 'pending' :
+                       view === 'pass' ? st === 'pass' :
+                       view === 'fail' ? st === 'fail' : true;
         }
 
         const searchLower = searchTerm.toLowerCase();
@@ -2207,9 +2691,9 @@ function App() {
 
   const stats = {
     total: extinguishers.length,
-    pending: extinguishers.filter(e => e.status === 'pending').length,
-    pass: extinguishers.filter(e => e.status === 'pass').length,
-    fail: extinguishers.filter(e => e.status === 'fail').length
+    pending: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'pending').length,
+    pass: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'pass').length,
+    fail: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'fail').length
   };
 
   const sectionCounts = SECTIONS.map(section => {
@@ -2217,9 +2701,9 @@ function App() {
     return {
       section,
       total: items.length,
-      pending: items.filter(e => e.status === 'pending').length,
-      pass: items.filter(e => e.status === 'pass').length,
-      fail: items.filter(e => e.status === 'fail').length
+      pending: items.filter(e => String(e.status || '').toLowerCase() === 'pending').length,
+      pass: items.filter(e => String(e.status || '').toLowerCase() === 'pass').length,
+      fail: items.filter(e => String(e.status || '').toLowerCase() === 'fail').length
     };
   });
 
@@ -2241,8 +2725,8 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black pb-20">
-      <div className="max-w-6xl mx-auto p-4">
+    <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black pb-20" style={{ width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
+      <div className="max-w-6xl mx-auto p-3 sm:p-4" style={{ width: '100%', maxWidth: '100%' }}>
         {/* Banner Image */}
         <div className="mb-2 rounded-lg overflow-hidden shadow-2xl" style={{ height: '270px' }}>
           <img
@@ -2269,10 +2753,10 @@ function App() {
         </div>
 
         {/* Header with gradient and red border */}
-        <div className="bg-gradient-to-r from-gray-700 to-gray-800 text-white p-4 rounded-lg shadow-lg mb-6 border border-red-900">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <div className="text-sm">
+        <div className="bg-gradient-to-r from-gray-700 to-gray-800 text-white p-3 sm:p-4 rounded-lg shadow-lg mb-6 border border-red-900">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full sm:w-auto">
+              <div className="text-xs sm:text-sm">
                 <span className="text-gray-400">Fire Safety Management</span>
                 <Link to="/" className="text-white font-semibold ml-2 hover:text-red-400 transition">
                   Fire Extinguisher Tracker
@@ -2280,7 +2764,7 @@ function App() {
               </div>
               {/* Workspace Badge - Long press to switch */}
               <div
-                className={`ml-4 px-4 py-2 rounded-lg text-base font-bold cursor-pointer select-none transition-all shadow-md border-2 ${
+                className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-bold cursor-pointer select-none transition-all shadow-md border-2 ${
                   workspaceBadgePressing
                     ? 'bg-yellow-400 text-yellow-900 scale-105 border-yellow-600'
                     : workspaces.length > 1
@@ -2294,47 +2778,48 @@ function App() {
                 onTouchEnd={handleWorkspaceBadgeTouchEnd}
                 title="Hold for 0.5s to switch inspection month"
               >
-                <div className="flex items-center gap-2">
-                  <Calendar size={18} />
-                  <span>{getCurrentWorkspace()?.label || 'Loading...'}</span>
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <Calendar size={16} className="sm:w-[18px] sm:h-[18px]" />
+                  <span className="whitespace-nowrap">{getCurrentWorkspace()?.label || 'Loading...'}</span>
                   {workspaces.length > 1 && (
-                    <span className="text-sm bg-white bg-opacity-50 px-2 py-0.5 rounded">
+                    <span className="text-xs sm:text-sm bg-white bg-opacity-50 px-1.5 sm:px-2 py-0.5 rounded">
                       {workspaces.length} months
                     </span>
                   )}
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">Logged in as:</span>
-              <span className="text-sm text-white">{user.email}</span>
+            <div className="flex items-center gap-1 sm:gap-1.5 sm:gap-2 flex-nowrap w-full sm:w-auto justify-end min-w-0">
+              <span className="text-xs text-gray-400 hidden sm:inline">Logged in as:</span>
+              <span className="text-xs sm:text-sm text-white truncate max-w-[60px] sm:max-w-none hidden min-[380px]:inline">{user.email}</span>
               <button
                 onClick={() => navigate('/app/calculator')}
-                className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-2"
+                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
                 title="Open Fire Extinguisher Calculator"
               >
-                <CalculatorIcon size={18} />
-                Calculator
+                <CalculatorIcon size={16} className="sm:w-[18px] sm:h-[18px]" />
+                <span className="hidden sm:inline">Calculator</span>
               </button>
               <button
                 onClick={() => setAdminMode(!adminMode)}
-                className={`p-2 hover:bg-gray-600 rounded flex items-center gap-2 ${adminMode ? 'bg-gray-600' : ''}`}
+                className={`p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 flex-shrink-0 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
               >
-                <Settings size={18} />
+                <Settings size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={handleLogout}
-                className="p-2 hover:bg-gray-600 rounded flex items-center gap-2"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 flex-shrink-0"
                 title="Logout"
               >
-                <LogOut size={18} />
+                <LogOut size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={() => setShowMenu(!showMenu)}
-                className="p-2 hover:bg-gray-600 rounded"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center flex-shrink-0"
+                title="Menu"
               >
-                <Menu size={20} />
+                <Menu size={20} className="sm:w-[20px] sm:h-[20px]" />
               </button>
             </div>
           </div>
@@ -2537,15 +3022,22 @@ function App() {
 
               {adminMode && (
                 <>
-                  <div className="border-t pt-2 mt-4">
-                  <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      exportDatabaseCsv();
-                      setShowMenu(false);
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600 transition w-full"
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
+              </div>
+              <button
+                onClick={() => openDuplicateCleanup()}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 transition w-full"
+              >
+                <History size={20} />
+                Cleanup Duplicates (by Asset ID)
+              </button>
+              <button
+                onClick={() => {
+                  exportDatabaseCsv();
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600 transition w-full"
                   >
                     <Download size={20} />
                     Export Database (CSV)
@@ -2568,18 +3060,18 @@ function App() {
                     className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 transition w-full"
                   >
                     <Upload size={20} />
-                    Import Database (JSON)
-                  </button>
-                  <button
-                    onClick={() => {
-                      repairMissingWorkspaceIds();
-                      setShowMenu(false);
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition w-full"
-                  >
-                    <RotateCcw size={20} />
-                    Repair Missing WorkspaceIds
-                  </button>
+                Import Database (JSON)
+              </button>
+              <button
+                onClick={() => {
+                  repairMissingWorkspaceIds();
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition w-full"
+              >
+                <RotateCcw size={20} />
+                Repair Missing WorkspaceIds
+              </button>
                   <button
                     onClick={() => {
                       setShowImportModal(true);
@@ -2647,6 +3139,39 @@ function App() {
                 <Clock size={20} />
                 Export Time Data
               </button>
+
+              {/* Quick Lists */}
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Quick Lists</p>
+              </div>
+              <button
+                onClick={() => setShowStatusList({ status: 'pass', scope: selectedSection === 'All' ? 'all' : 'section' })}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded hover:bg-emerald-600 transition w-full"
+              >
+                <CheckCircle size={20} />
+                View Passed
+              </button>
+              <button
+                onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
+                className="flex items-center gap-2 px-4 py-2 bg-rose-500 text-white rounded hover:bg-rose-600 transition w-full"
+              >
+                <XCircle size={20} />
+                View Failed
+              </button>
+              <button
+                onClick={() => setShowCategoryList({ category: 'spare' })}
+                className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600 transition w-full"
+              >
+                <Circle size={20} />
+                View Spares
+              </button>
+              <button
+                onClick={() => setShowCategoryList({ category: 'replaced' })}
+                className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 transition w-full"
+              >
+                <History size={20} />
+                View Replaced
+              </button>
               {adminMode && (
                 <>
                   <div className="border-t pt-2 mt-4">
@@ -2668,11 +3193,47 @@ function App() {
             <div className="text-3xl font-bold text-gray-700">{stats.pending}</div>
             <div className="text-gray-600">Pending</div>
           </div>
-          <div className="bg-white p-4 rounded-lg shadow text-center">
+          <div
+            className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:shadow-md transition"
+            onClick={() => setShowStatusList({ status: 'pass', scope: selectedSection === 'All' ? 'all' : 'section' })}
+            onMouseDown={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'pass', scope: 'all' });
+              }, 600);
+            }}
+            onMouseUp={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onMouseLeave={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onTouchStart={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'pass', scope: 'all' });
+              }, 600);
+            }}
+            onTouchEnd={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+          >
             <div className="text-3xl font-bold text-green-600">{stats.pass}</div>
             <div className="text-gray-600">Passed</div>
           </div>
-          <div className="bg-white p-4 rounded-lg shadow text-center">
+          <div
+            className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:shadow-md transition"
+            onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
+            onMouseDown={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'fail', scope: 'all' });
+              }, 600);
+            }}
+            onMouseUp={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onMouseLeave={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onTouchStart={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'fail', scope: 'all' });
+              }, 600);
+            }}
+            onTouchEnd={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+          >
             <div className="text-3xl font-bold text-red-600">{stats.fail}</div>
             <div className="text-gray-600">Failed</div>
           </div>
@@ -2683,6 +3244,106 @@ function App() {
             <div className="text-gray-600">Complete</div>
           </div>
         </div>
+
+        {/* Status Quick List Modal */}
+        {showStatusList && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold">
+                  {showStatusList.status === 'pass' ? 'Passed' : 'Failed'} Extinguishers
+                  {showStatusList.scope === 'section' && selectedSection !== 'All' ? ` — ${selectedSection}` : ' — All Sections'}
+                </h3>
+                <button onClick={() => setShowStatusList(null)}>
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="flex items-center gap-3 mb-4">
+                <label className="text-sm text-gray-700">Scope:</label>
+                <select
+                  value={showStatusList.scope}
+                  onChange={(e) => setShowStatusList(prev => ({ ...prev, scope: e.target.value }))}
+                  className="p-2 border rounded"
+                >
+                  <option value="section">Current Section</option>
+                  <option value="all">All Sections</option>
+                </select>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto">
+                {(() => {
+                  const scopeIsSection = showStatusList.scope === 'section' && selectedSection !== 'All';
+                  const list = extinguishers
+                    .filter(e => String(e.status || '').toLowerCase() === showStatusList.status)
+                    .filter(e => !scopeIsSection || e.section === selectedSection)
+                    .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
+                  if (list.length === 0) {
+                    return <div className="text-gray-500">No items found.</div>;
+                  }
+                  return (
+                    <div className="space-y-2">
+                      {list.map(item => (
+                        <div key={item.id} className="p-3 border rounded flex items-center justify-between bg-gray-50">
+                          <div>
+                            <div className="font-semibold">{item.assetId}</div>
+                            <div className="text-xs text-gray-600">{item.section} • {item.vicinity} {item.parentLocation ? `• ${item.parentLocation}` : ''}</div>
+                          </div>
+                          <button
+                            className="text-blue-600 hover:underline"
+                            onClick={() => { setShowStatusList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
+                          >
+                            View
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Category Quick List Modal (Spare / Replaced) */}
+        {showCategoryList && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold capitalize">{showCategoryList.category} Extinguishers</h3>
+                <button onClick={() => setShowCategoryList(null)}>
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto">
+                {(() => {
+                  const list = extinguishers
+                    .filter(e => (e.category || 'standard') === showCategoryList.category)
+                    .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
+                  if (list.length === 0) {
+                    return <div className="text-gray-500">No items found.</div>;
+                  }
+                  return (
+                    <div className="space-y-2">
+                      {list.map(item => (
+                        <div key={item.id} className="p-3 border rounded flex items-center justify-between bg-gray-50">
+                          <div>
+                            <div className="font-semibold">{item.assetId}</div>
+                            <div className="text-xs text-gray-600">{item.section} • {item.vicinity} {item.parentLocation ? `• ${item.parentLocation}` : ''}</div>
+                          </div>
+                          <button
+                            className="text-blue-600 hover:underline"
+                            onClick={() => { setShowCategoryList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
+                          >
+                            View
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4 mb-6 relative z-10">
           <button
@@ -2809,6 +3470,7 @@ function App() {
                   onFail={handleFail}
                   onEdit={handleEdit}
                   onSaveNotes={handleSaveNotes}
+                  onReplace={handleOpenReplace}
                 />
               }
             />
@@ -2942,6 +3604,18 @@ function App() {
               <div className="text-xs text-gray-500 mt-2">
                 These notes are specific to {noteSelectedSection} and separate from individual fire extinguisher notes.
               </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="saveForNextMonth"
+                  checked={saveNoteForNextMonth}
+                  onChange={(e) => setSaveNoteForNextMonth(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label htmlFor="saveForNextMonth" className="text-sm text-gray-700 cursor-pointer">
+                  Save this note for next month's inspection (otherwise it will be cleared when starting a new month)
+                </label>
+              </div>
             </div>
 
             <div className="flex gap-4">
@@ -2953,7 +3627,10 @@ function App() {
                 Save Notes for {noteSelectedSection}
               </button>
               <button
-                onClick={() => setShowSectionNotesModal(false)}
+                onClick={() => {
+                  setShowSectionNotesModal(false);
+                  setSaveNoteForNextMonth(false);
+                }}
                 className="px-6 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
               >
                 Cancel
@@ -3087,6 +3764,19 @@ function App() {
                   {SECTIONS.map(section => (
                     <option key={section} value={section}>{section}</option>
                   ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  value={newItem.category}
+                  onChange={(e) => setNewItem({ ...newItem, category: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="spare">Spare</option>
+                  <option value="replaced">Replaced</option>
                 </select>
               </div>
 
@@ -3260,7 +3950,7 @@ function App() {
                       const newValue = e.target.value.trim();
                       try {
                         const docRef = doc(db, 'extinguishers', selectedItem.id);
-                        await updateDoc(docRef, { manufactureYear: newValue });
+                        await setDoc(docRef, { manufactureYear: newValue }, { merge: true });
                       } catch (err) {
                         console.error('Error saving manufacture year:', err);
                         alert('Error saving year. Please try again.');
@@ -3424,24 +4114,40 @@ function App() {
             {/* Notes always visible */}
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Notes
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-300">
+                    Notes
+                  </label>
+                  {notesSaving && (
+                    <span className="text-xs text-blue-400">Saving...</span>
+                  )}
+                  {notesSaved && !notesSaving && (
+                    <span className="text-xs text-green-400">Saved</span>
+                  )}
+                </div>
                 <textarea
                   rows="3"
                   value={selectedItemNotes}
                   onChange={(e) => setSelectedItemNotes(e.target.value)}
+                  onBlur={async () => {
+                    // Save immediately on blur
+                    if (selectedItem && selectedItemNotes !== (selectedItem.notes || '')) {
+                      setNotesSaving(true);
+                      setNotesSaved(false);
+                      try {
+                        await handleSaveNotes(selectedItem, selectedItemNotes);
+                        setNotesSaved(true);
+                        setTimeout(() => setNotesSaved(false), 2000);
+                      } catch (error) {
+                        console.error('Auto-save on blur failed:', error);
+                      } finally {
+                        setNotesSaving(false);
+                      }
+                    }
+                  }}
                   className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  placeholder="Add any notes about this extinguisher..."
+                  placeholder="Add any notes about this extinguisher... (auto-saves)"
                 />
-                <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={() => handleSaveNotes(selectedItem, selectedItemNotes)}
-                    className="bg-slate-600 text-white px-4 py-2 rounded-lg hover:bg-slate-700 font-semibold transition shadow"
-                  >
-                    Save Notes
-                  </button>
-                </div>
               </div>
 
               {selectedItem.status === 'pending' && (
@@ -3468,13 +4174,29 @@ function App() {
               )}
             </div>
 
-            <div className="mt-4 pt-4 border-t border-gray-700">
+            <div className="mt-4 pt-4 border-t border-gray-700 space-y-2">
               <button
                 onClick={() => handleEdit(selectedItem)}
                 className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
               >
                 <Edit2 size={20} />
                 Edit Extinguisher Details
+              </button>
+              <button
+                onClick={() => {
+                  setReplaceItem(selectedItem);
+                  setReplaceForm({
+                    assetId: selectedItem.assetId || '',
+                    serial: '',
+                    reason: '',
+                    manufactureDate: '',
+                    notes: ''
+                  });
+                }}
+                className="w-full bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
+              >
+                <RotateCcw size={20} />
+                Replace Extinguisher
               </button>
             </div>
           </div>
@@ -3542,6 +4264,19 @@ function App() {
                   {SECTIONS.map(section => (
                     <option key={section} value={section}>{section}</option>
                   ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  value={editItem.category || 'standard'}
+                  onChange={(e) => setEditItem({ ...editItem, category: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="spare">Spare</option>
+                  <option value="replaced">Replaced</option>
                 </select>
               </div>
 
@@ -3654,6 +4389,147 @@ function App() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Replace Extinguisher Modal */}
+      {replaceItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full my-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Replace Fire Extinguisher</h3>
+              <button onClick={() => {
+                setReplaceItem(null);
+                setReplaceForm({
+                  assetId: '',
+                  serial: '',
+                  reason: '',
+                  manufactureDate: '',
+                  notes: ''
+                });
+              }}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-yellow-800">
+                  <strong>Replacing:</strong> Asset #{replaceItem.assetId} • Serial: {replaceItem.serial || 'N/A'}
+                </p>
+                <p className="text-xs text-yellow-700 mt-1">
+                  A new extinguisher record will be created. The old extinguisher will retain all history.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Asset ID <span className="text-gray-500">(pre-filled, editable)</span>
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.assetId}
+                  onChange={(e) => setReplaceForm({...replaceForm, assetId: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Enter asset ID"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  New Serial Number <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.serial}
+                  onChange={(e) => setReplaceForm({...replaceForm, serial: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Enter new serial number (must be different)"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">Old serial: {replaceItem.serial || 'N/A'}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reason for Replacement
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.reason}
+                  onChange={(e) => setReplaceForm({...replaceForm, reason: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="e.g., 6-year NFPA maintenance replacement"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Manufacture Date of New Extinguisher
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.manufactureDate}
+                  onChange={(e) => setReplaceForm({...replaceForm, manufactureDate: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="e.g., 2025"
+                />
+                <p className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year maintenance, or hydrostatic test date</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  rows="4"
+                  value={replaceForm.notes}
+                  onChange={(e) => setReplaceForm({...replaceForm, notes: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Enter any additional notes about the replacement..."
+                />
+              </div>
+
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-600">
+                  <strong>Note:</strong> The replacement will be timestamped automatically. The old extinguisher will keep all inspection history, photos, and notes.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-4 pt-4 mt-6">
+              <button
+                onClick={() => {
+                  if (!replaceForm.serial || !replaceForm.serial.trim()) {
+                    alert('Serial number is required.');
+                    return;
+                  }
+                  if (window.confirm(`Replace extinguisher ${replaceItem.assetId}?\n\nNew serial: ${replaceForm.serial}\n\nThis will create a new extinguisher record.`)) {
+                    handleReplaceExtinguisher(replaceItem, replaceForm);
+                  }
+                }}
+                className="flex-1 bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold"
+              >
+                <RotateCcw size={20} />
+                Replace Extinguisher
+              </button>
+              <button
+                onClick={() => {
+                  setReplaceItem(null);
+                  setReplaceForm({
+                    assetId: '',
+                    serial: '',
+                    reason: '',
+                    manufactureDate: '',
+                    notes: ''
+                  });
+                }}
+                className="px-4 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
@@ -4127,6 +5003,52 @@ function App() {
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Cleanup Modal */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Duplicate Cleanup — Current Month</h3>
+              <button onClick={() => setShowDuplicateModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            {duplicateScanRunning ? (
+              <div className="text-gray-600">Scanning for duplicates…</div>
+            ) : duplicateGroups.length === 0 ? (
+              <div className="text-gray-600">No duplicates found.</div>
+            ) : (
+              <>
+                <div className="mb-3 text-sm text-gray-700">
+                  Found {duplicateGroups.length} Asset ID(s) with duplicates. Total duplicates: {duplicateGroups.reduce((n,g)=>n+g.remove.length,0)}
+                </div>
+                <div className="max-h-[60vh] overflow-y-auto space-y-3">
+                  {duplicateGroups.map(group => (
+                    <div key={group.assetId} className="p-3 border rounded bg-gray-50">
+                      <div className="font-semibold">Asset ID: {group.assetId}</div>
+                      <div className="text-xs text-gray-600 mt-1">
+                        Keep: {group.keep.id} • Status: {String(group.keep.status).toUpperCase()} {group.keep.checkedDate ? `• Checked: ${new Date(group.keep.checkedDate).toLocaleString()}` : ''}
+                      </div>
+                      <div className="text-xs text-gray-600">Remove: {group.remove.map(r => r.id).join(', ')}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                  <button onClick={() => setShowDuplicateModal(false)} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Cancel</button>
+                  <button
+                    onClick={runDuplicateCleanup}
+                    disabled={duplicateFixRunning}
+                    className={`px-4 py-2 rounded text-white ${duplicateFixRunning ? 'bg-indigo-300' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                  >
+                    {duplicateFixRunning ? 'Cleaning…' : 'Merge & Remove Duplicates'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
