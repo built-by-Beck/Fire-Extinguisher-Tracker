@@ -35,9 +35,18 @@ function Login() {
           if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:shareCodesLookup',message:'getDoc result',data:{codeKey,exists:codeSnap.exists(),ownerUID:codeSnap.exists()?codeSnap.data().ownerUID:null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{}); }
           // #endregion
           if (codeSnap.exists()) {
-            const ownerUID = codeSnap.data().ownerUID;
-            setResolvedOwnerId(ownerUID);
-            setOwnerCode(code.toUpperCase());
+            const data = codeSnap.data();
+            const ownerUID = data.ownerUID;
+            const expiresAt = data.expiresAt;
+            if (expiresAt && (expiresAt.toDate ? expiresAt.toDate() : new Date(expiresAt)) <= new Date()) {
+              setError('This link has expired.');
+              setResolvedOwnerId(null);
+            } else if (ownerUID) {
+              setResolvedOwnerId(ownerUID);
+              setOwnerCode(code.toUpperCase());
+            } else {
+              setError('Invalid share code. Please check and try again.');
+            }
           } else {
             setError('Invalid share code. Please check and try again.');
           }
@@ -206,7 +215,12 @@ function Login() {
                           const codeRef = doc(db, 'shareCodes', ownerCode.toUpperCase());
                           const codeSnap = await getDoc(codeRef);
                           if (codeSnap.exists()) {
-                            ownerUID = codeSnap.data().ownerUID;
+                            const data = codeSnap.data();
+                            const exp = data.expiresAt;
+                            if (exp && (exp.toDate ? exp.toDate() : new Date(exp)) <= new Date()) {
+                              throw new Error('This link has expired.');
+                            }
+                            ownerUID = data.ownerUID;
                           } else {
                             throw new Error('Invalid share code. Please check and try again.');
                           }

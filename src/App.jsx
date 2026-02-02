@@ -157,6 +157,14 @@ const SECTIONS = [
     }
   };
 
+  // Build expiresAt for shareCodes (Timestamp or omit)
+  const shareCodeExpiresAt = () => {
+    if (shareExpiry && !isNaN(new Date(shareExpiry).getTime())) {
+      return new Date(shareExpiry);
+    }
+    return null;
+  };
+
   const saveShareSettings = async () => {
     if (!user || readOnly) return;
     setShareLoading(true);
@@ -165,30 +173,84 @@ const SECTIONS = [
       const snap = await getDoc(ref);
       const existing = snap.exists() ? snap.data() : {};
       
-      // Generate short code if it doesn't exist
+      // Generate short code only if it doesn't exist
       let shortCode = existing.shortCode;
       if (!shortCode) {
-        // Generate unique short code
-        let attempts = 0;
-        while (!shortCode && attempts < 10) {
-          const candidate = generateShortCode();
-          const codeRef = doc(db, 'shareCodes', candidate);
-          const codeSnap = await getDoc(codeRef);
-          if (!codeSnap.exists()) {
-            shortCode = candidate;
-            // Create the reverse lookup
-            await setDoc(codeRef, { ownerUID: user.uid });
-          }
-          attempts++;
-        }
-        if (!shortCode) {
-          throw new Error('Failed to generate unique share code');
-        }
+        shortCode = await createNewShareCode(user.uid, shareCodeExpiresAt());
+        if (!shortCode) throw new Error('Failed to generate unique share code');
       }
       
       const payload = { 
         publicRead: !!sharePublic,
         shortCode: shortCode
+      };
+      const expiryDate = shareExpiry && !isNaN(new Date(shareExpiry).getTime()) ? new Date(shareExpiry) : null;
+      if (expiryDate) {
+        payload.expiresAt = expiryDate;
+      } else {
+        payload.expiresAt = deleteField();
+      }
+      await setDoc(ref, payload, { merge: true });
+      // Keep shareCodes doc in sync: update this code's expiresAt so the link expires at the right time
+      const codeRef = doc(db, 'shareCodes', shortCode);
+      if (expiryDate) {
+        await setDoc(codeRef, { ownerUID: user.uid, expiresAt: expiryDate }, { merge: true });
+      } else {
+        await setDoc(codeRef, { ownerUID: user.uid, expiresAt: deleteField() }, { merge: true });
+      }
+      alert('Share settings saved.');
+      setShowShareModal(false);
+    } catch (e) {
+      console.error('Failed to save share settings', e);
+      alert('Failed to save share settings.');
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  // Create a new share code (writes shareCodes doc with ownerUID + optional expiresAt). Returns the new code or null.
+  const createNewShareCode = async (ownerUID, expiresAt) => {
+    let attempts = 0;
+    while (attempts < 10) {
+      const candidate = generateShortCode();
+      const codeRef = doc(db, 'shareCodes', candidate);
+      const codeSnap = await getDoc(codeRef);
+      if (!codeSnap.exists()) {
+        const codePayload = { ownerUID };
+        if (expiresAt) codePayload.expiresAt = expiresAt;
+        await setDoc(codeRef, codePayload);
+        return candidate;
+      }
+      attempts++;
+    }
+    return null;
+  };
+
+  // Regenerate share code: invalidate old link, create new code and link. Old link stops working.
+  const regenerateShareCode = async () => {
+    if (!user || readOnly) return;
+    setShareLoading(true);
+    try {
+      const ref = doc(db, 'shares', user.uid);
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? snap.data() : {};
+      const oldCode = (existing.shortCode || '').toUpperCase();
+      if (oldCode) {
+        const oldCodeRef = doc(db, 'shareCodes', oldCode);
+        try {
+          await deleteDoc(oldCodeRef);
+        } catch (e) {
+          console.warn('Could not delete old share code doc', e);
+        }
+      }
+      const expiresAt = shareCodeExpiresAt();
+      const newCode = await createNewShareCode(user.uid, expiresAt);
+      if (!newCode) {
+        throw new Error('Failed to generate new share code');
+      }
+      const payload = {
+        publicRead: !!sharePublic,
+        shortCode: newCode,
       };
       if (shareExpiry && !isNaN(new Date(shareExpiry).getTime())) {
         payload.expiresAt = new Date(shareExpiry);
@@ -196,11 +258,11 @@ const SECTIONS = [
         payload.expiresAt = deleteField();
       }
       await setDoc(ref, payload, { merge: true });
-      alert('Share settings saved.');
-      setShowShareModal(false);
+      setShareShortCode(newCode);
+      alert('New share link generated. The previous link no longer works.');
     } catch (e) {
-      console.error('Failed to save share settings', e);
-      alert('Failed to save share settings.');
+      console.error('Failed to regenerate share code', e);
+      alert('Failed to generate new link.');
     } finally {
       setShareLoading(false);
     }
@@ -4652,17 +4714,28 @@ const SECTIONS = [
                 <label htmlFor="sharePublic" className="font-medium">Enable read-only public access (with share link)</label>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration (optional)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration</label>
                 <input
                   type="datetime-local"
                   value={shareExpiry}
                   onChange={(e) => setShareExpiry(e.target.value)}
                   className="border rounded px-3 py-2 w-full"
                 />
-                <p className="text-xs text-gray-500 mt-1">After this time, guest access will automatically end. Leave blank for no expiration.</p>
+                <p className="text-xs text-gray-500 mt-1">Set when this link should stop working. Recommended so each link can expire.</p>
               </div>
               {shareShortCode && (
                 <>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={regenerateShareCode}
+                      disabled={shareLoading}
+                      className="px-3 py-2 rounded bg-amber-500 text-amber-900 text-sm font-medium hover:bg-amber-400 disabled:opacity-50"
+                    >
+                      Generate new link
+                    </button>
+                    <span className="text-xs text-gray-500 self-center">Previous link will stop working.</span>
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Share Link</label>
                     <div className="flex gap-2">
