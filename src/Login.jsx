@@ -21,13 +21,19 @@ function Login() {
     const qs = new URLSearchParams(location.search);
     const code = qs.get('code') || '';
     const owner = qs.get('owner') || '';
-    
+    // #region agent log
+    if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:resolveCode',message:'URL params',data:{code,owner,search:location.search},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{}); }
+    // #endregion
     if (code) {
       // Look up short code
       (async () => {
         try {
-          const codeRef = doc(db, 'shareCodes', code.toUpperCase());
+          const codeKey = code.toUpperCase();
+          const codeRef = doc(db, 'shareCodes', codeKey);
           const codeSnap = await getDoc(codeRef);
+          // #region agent log
+          if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:shareCodesLookup',message:'getDoc result',data:{codeKey,exists:codeSnap.exists(),ownerUID:codeSnap.exists()?codeSnap.data().ownerUID:null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{}); }
+          // #endregion
           if (codeSnap.exists()) {
             const ownerUID = codeSnap.data().ownerUID;
             setResolvedOwnerId(ownerUID);
@@ -38,6 +44,9 @@ function Login() {
         } catch (err) {
           console.error('Error looking up share code:', err);
           setError('Failed to look up share code.');
+          // #region agent log
+          if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:shareCodesError',message:'lookup failed',data:{err:err?.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{}); }
+          // #endregion
         }
       })();
     } else if (owner) {
@@ -54,7 +63,9 @@ function Login() {
         const qs = new URLSearchParams(location.search);
         const code = qs.get('code');
         const owner = qs.get('owner');
-        
+        // #region agent log
+        if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:authRedirect',message:'redirect branch',data:{hasUser:!!user,code,owner,resolvedOwnerId,branch:code&&resolvedOwnerId?'code+owner':owner?'owner':'else'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{}); }
+        // #endregion
         if (code && resolvedOwnerId) {
           navigate(`/app?owner=${encodeURIComponent(resolvedOwnerId)}`);
         } else if (owner) {
@@ -208,7 +219,9 @@ function Login() {
                       if (!ownerUID) {
                         throw new Error('Please enter a share code.');
                       }
-                      
+                      // #region agent log
+                      if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:continueAsGuest',message:'navigate target',data:{ownerUID,navigateTo:`/app?owner=${encodeURIComponent(ownerUID)}`},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{}); }
+                      // #endregion
                       await signInAnonymously(auth);
                       navigate(`/app?owner=${encodeURIComponent(ownerUID)}`);
                     } catch (err) {

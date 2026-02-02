@@ -105,6 +105,9 @@ const SECTIONS = [
   const ownerOverride = (qs.get('owner') || '').trim() || null;
   const dataOwnerId = ownerOverride || (user?.uid || null);
   const readOnly = !!ownerOverride && ownerOverride !== (user?.uid || null);
+  // #region agent log
+  if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:ownerOverride',message:'owner/readOnly',data:{search:location.search,ownerOverride,readOnly,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{}); }
+  // #endregion
 
   // Generate short share code
   const generateShortCode = () => {
@@ -127,7 +130,11 @@ const SECTIONS = [
       if (snap.exists()) {
         const d = snap.data() || {};
         setSharePublic(!!d.publicRead);
-        setShareShortCode(d.shortCode || '');
+        const sc = d.shortCode || '';
+        setShareShortCode(sc);
+        // #region agent log
+        if (sc && typeof fetch === 'function') { const base = (import.meta.env.BASE_URL || '').replace(/\/$/, ''); const link = `${typeof window !== 'undefined' ? window.location.origin : ''}${base}/login?code=${sc}`; fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:openShareSettings',message:'share link on load',data:{base,shareShortCode:sc,link},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{}); }
+        // #endregion
         if (d.expiresAt && d.expiresAt.toDate) {
           const iso = d.expiresAt.toDate().toISOString();
           setShareExpiry(iso.slice(0,16));
@@ -4672,6 +4679,9 @@ const SECTIONS = [
                           try {
                             const base = (import.meta.env.BASE_URL || '').replace(/\/$/, '');
                             const link = `${window.location.origin}${base}/login?code=${shareShortCode}`;
+                            // #region agent log
+                            if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:copyShareLink',message:'share link built',data:{base,shareShortCode,origin:window.location.origin,link},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{}); }
+                            // #endregion
                             await navigator.clipboard.writeText(link);
                             alert('Share link copied!');
                           } catch {
