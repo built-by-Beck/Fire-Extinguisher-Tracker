@@ -561,17 +561,18 @@ const SECTIONS = [
     return () => unsubscribeWorkspaces();
   }, [dataOwnerId, readOnly]);
 
-  // Load extinguishers - show ALL extinguishers regardless of workspaceId
+  // Load extinguishers for the current workspace only
   useEffect(() => {
-    if (!dataOwnerId) {
+    if (!dataOwnerId || !currentWorkspaceId) {
       setExtinguishers([]);
       return;
     }
 
-    // Load ALL extinguishers for the data owner - no workspace filtering
+    // Load extinguishers for the current workspace
     const extinguishersQuery = query(
       collection(db, 'extinguishers'),
-      where('userId', '==', dataOwnerId)
+      where('userId', '==', dataOwnerId),
+      where('workspaceId', '==', currentWorkspaceId)
     );
 
     const normalizeStatus = (s) => String(s || '').toLowerCase();
@@ -4934,7 +4935,7 @@ const SECTIONS = [
                       <input readOnly value={shareShortCode} className="flex-1 border rounded px-3 py-2 text-sm font-mono text-center text-lg font-bold" />
                       <button
                         onClick={async () => {
-                          try { await navigator.clipboard.writeText(shareShortCode); alert('Share code copied!'); } catch {}
+                          try { await navigator.clipboard.writeText(shareShortCode); alert('Share code copied!'); } catch { /* clipboard access denied */ }
                         }}
                         className="px-3 py-2 rounded bg-gray-800 text-white text-sm"
                       >Copy</button>
