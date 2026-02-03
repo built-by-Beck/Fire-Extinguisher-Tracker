@@ -912,19 +912,17 @@ const SECTIONS = [
   };
 
   const resetCurrentWorkspaceToPending = async () => {
-    if (!user || !currentWorkspaceId) return;
-    const workspace = getCurrentWorkspace();
-    const label = workspace?.label || 'this month';
-    if (!window.confirm(`Reset all extinguishers in "${label}" to pending?\n\nThis clears current inspection status (pass/fail) so you can start the month over. Past inspection history is kept.`)) return;
+    if (!user) return;
+    if (!window.confirm(`Reset ALL extinguishers to pending?\n\nThis clears current inspection status (pass/fail) so you can start fresh. Past inspection history is kept.`)) return;
     try {
+      // Query ALL extinguishers for this user (regardless of workspaceId)
       const extQuery = query(
         collection(db, 'extinguishers'),
-        where('userId', '==', user.uid),
-        where('workspaceId', '==', currentWorkspaceId)
+        where('userId', '==', user.uid)
       );
       const snap = await getDocs(extQuery);
       if (snap.docs.length === 0) {
-        alert('No extinguishers found in this workspace.');
+        alert('No extinguishers found.');
         return;
       }
       const BATCH_SIZE = 500;
@@ -934,7 +932,8 @@ const SECTIONS = [
         notes: '',
         checklistData: null,
         lastInspectionPhotoUrl: null,
-        lastInspectionGps: null
+        lastInspectionGps: null,
+        workspaceId: currentWorkspaceId || null  // Also set the workspaceId to current
       };
       for (let i = 0; i < snap.docs.length; i += BATCH_SIZE) {
         const batch = writeBatch(db);
@@ -942,10 +941,10 @@ const SECTIONS = [
         chunk.forEach(docSnap => batch.update(docSnap.ref, updates));
         await batch.commit();
       }
-      alert(`All ${snap.docs.length} extinguishers in "${label}" have been reset to pending.`);
+      alert(`All ${snap.docs.length} extinguishers have been reset to pending.`);
     } catch (error) {
       console.error('Error resetting to pending:', error);
-      alert('Error resetting. Please try again.');
+      alert('Error resetting: ' + error.message);
     }
   };
 
@@ -3175,18 +3174,16 @@ const SECTIONS = [
                 <Plus size={20} />
                 New Inspection Month
               </button>
-              {getCurrentWorkspace() && (
-                <button
-                  onClick={() => {
-                    setShowMenu(false);
-                    resetCurrentWorkspaceToPending();
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 transition w-full"
-                >
-                  <RotateCcw size={20} />
-                  Reset this month to pending
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  setShowMenu(false);
+                  resetCurrentWorkspaceToPending();
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 transition w-full"
+              >
+                <RotateCcw size={20} />
+                Reset all to pending
+              </button>
               {workspaces.length > 1 && (
                 <button
                   onClick={() => {
