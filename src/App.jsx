@@ -858,10 +858,11 @@ const SECTIONS = [
             parentLocation: data.parentLocation || '',
             section: data.section,
             category: data.category || 'standard',
-            status: 'pending', // Always reset to pending for new month
-            checkedDate: null, // Clear checked date
-            notes: '', // Clear notes
-            inspectionHistory: data.inspectionHistory || [], // Keep history
+            status: 'pending',
+            checkedDate: null,
+            notes: '',
+            inspectionHistory: [], // New month: no inspection history
+            checklistData: null, // New month: no checklist / inspection data
             userId: user.uid,
             workspaceId: wsDoc.id,
             createdAt: now.toISOString(),
