@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
 import ExcelJS from 'exceljs';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Share2 } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Share2, Archive } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch, getDoc, deleteField } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
@@ -307,6 +307,7 @@ const SECTIONS = [
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState(null);
   const [showWorkspaceSwitcher, setShowWorkspaceSwitcher] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [pendingNewMonth, setPendingNewMonth] = useState(null); // { label, monthYear } when user picked month, awaiting copy/blank choice
   const [workspaceLongPressTimer, setWorkspaceLongPressTimer] = useState(null);
   const [workspaceBadgePressing, setWorkspaceBadgePressing] = useState(false);
 
@@ -818,10 +819,12 @@ const SECTIONS = [
     setShowWorkspaceSwitcher(false);
   };
 
-  const createWorkspace = async (label, copyFrom = null) => {
+  const createWorkspace = async (label, copyFrom = null, monthYearOverride = null) => {
     try {
       const now = new Date();
-      const monthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const monthYear = monthYearOverride != null
+        ? monthYearOverride
+        : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
       const newWorkspace = {
         userId: user.uid,
@@ -903,6 +906,7 @@ const SECTIONS = [
       }
 
       setShowCreateWorkspace(false);
+      setPendingNewMonth(null);
       switchWorkspace(wsDoc.id);
       return wsDoc.id;
     } catch (error) {
@@ -951,6 +955,37 @@ const SECTIONS = [
         const existingLogs = JSON.parse(localStorage.getItem(`inspectionLogs_${user.uid}`) || '[]');
         existingLogs.push(inspectionLog);
         localStorage.setItem(`inspectionLogs_${user.uid}`, JSON.stringify(existingLogs));
+      }
+
+      // Download proof CSV so user has a file showing inspections were completed
+      try {
+        const headers = ['Asset ID', 'Section', 'Status', 'Checked Date', 'Notes'];
+        const rows = inspectionLog.extinguisherResults.map(r => [
+          r.assetId || '',
+          r.section || '',
+          r.status || '',
+          r.checkedDate || '',
+          (r.notes || '').replace(/"/g, '""')
+        ]);
+        const csvContent = [
+          ['Inspection proof', workspace.label, inspectionLog.archivedDate].join(','),
+          ['Total', stats.total, 'Passed', stats.passed, 'Failed', stats.failed, 'Pending', stats.pending].join(','),
+          '',
+          headers.join(','),
+          ...rows.map(row => row.map(c => `"${String(c)}"`).join(','))
+        ].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const proofDate = new Date().toISOString().slice(0, 10);
+        a.download = `Inspection_Proof_${workspace.label.replace(/\s/g, '_')}_${proofDate}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (downloadErr) {
+        console.warn('Could not download proof CSV:', downloadErr);
       }
 
       // Archive the workspace
@@ -4453,36 +4488,53 @@ const SECTIONS = [
                 return (
                   <div
                     key={workspace.id}
-                    onClick={() => switchWorkspace(workspace.id)}
-                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                    className={`p-4 rounded-lg border-2 transition-all ${
                       isCurrent
                         ? 'border-blue-500 bg-blue-50'
                         : 'border-gray-200 hover:border-gray-400 hover:bg-gray-50'
                     }`}
                   >
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-2">
-                        <Calendar size={20} className={isCurrent ? 'text-blue-600' : 'text-gray-500'} />
-                        <span className="font-semibold">{workspace.label}</span>
-                        {isCurrent && (
-                          <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded">Active</span>
+                    <div className="flex justify-between items-start gap-2">
+                      <div
+                        onClick={() => switchWorkspace(workspace.id)}
+                        className="flex-1 cursor-pointer min-w-0"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Calendar size={20} className={isCurrent ? 'text-blue-600' : 'text-gray-500'} />
+                          <span className="font-semibold">{workspace.label}</span>
+                          {isCurrent && (
+                            <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded">Active</span>
+                          )}
+                        </div>
+                        <div className="text-sm text-gray-600 mt-0.5">
+                          {(() => {
+                            const wsStats = getWorkspaceStats(
+                              isCurrent ? extinguishers : []
+                            );
+                            return isCurrent ? `${wsStats.total - wsStats.pending}/${wsStats.total}` : '';
+                          })()}
+                        </div>
+                        {!isCurrentMonth && (
+                          <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+                            <span>Behind schedule</span>
+                          </div>
                         )}
                       </div>
-                      <div className="text-sm text-gray-600">
-                        {(() => {
-                          // Calculate stats for this workspace - need to fetch or use cached
-                          const wsStats = getWorkspaceStats(
-                            isCurrent ? extinguishers : []
-                          );
-                          return isCurrent ? `${wsStats.total - wsStats.pending}/${wsStats.total}` : '';
-                        })()}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Archive "${workspace.label}"?\n\nThis will save all inspection results as proof and remove this month from your active list. A proof CSV will be downloaded.`)) {
+                            archiveWorkspace(workspace.id);
+                            setShowWorkspaceSwitcher(false);
+                          }
+                        }}
+                        className="p-2 rounded hover:bg-gray-200 text-gray-600 hover:text-gray-800 flex-shrink-0"
+                        title="Archive this month (saves proof and removes from active list)"
+                      >
+                        <Archive size={18} />
+                      </button>
                     </div>
-                    {!isCurrentMonth && (
-                      <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
-                        <span>Behind schedule</span>
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -4525,63 +4577,89 @@ const SECTIONS = [
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">New Inspection Month</h3>
-              <button onClick={() => setShowCreateWorkspace(false)}>
+              <h3 className="text-xl font-bold">
+                {pendingNewMonth ? `New month: ${pendingNewMonth.label}` : 'New Inspection Month'}
+              </h3>
+              <button
+                onClick={() => {
+                  setPendingNewMonth(null);
+                  setShowCreateWorkspace(false);
+                }}
+              >
                 <X size={24} />
               </button>
             </div>
 
             <div className="space-y-4">
-              {/* Month Suggestions */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select month label:
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(() => {
-                    const now = new Date();
-                    const suggestions = [];
-                    for (let i = 0; i < 4; i++) {
-                      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-                      const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
-                      suggestions.push(label);
-                    }
-                    return suggestions.map(label => (
-                      <button
-                        key={label}
-                        onClick={() => {
-                          const copyFromId = workspaces.length > 0 ? workspaces[0].id : null;
-                          if (copyFromId) {
-                            if (window.confirm(`Copy extinguisher list from "${workspaces[0].label}"?\n\nAll items will start as pending.`)) {
-                              createWorkspace(label, copyFromId);
-                            } else {
-                              createWorkspace(label, null);
-                            }
-                          } else {
-                            createWorkspace(label, null);
-                          }
-                        }}
-                        className="px-4 py-3 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-center font-medium"
-                      >
-                        {label}
-                      </button>
-                    ));
-                  })()}
-                </div>
-              </div>
+              {!pendingNewMonth ? (
+                <>
+                  {/* Month suggestions: next month, current, then 2 past */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Select month:
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(() => {
+                        const now = new Date();
+                        const suggestions = [];
+                        for (let i = -1; i <= 2; i++) {
+                          const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+                          const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
+                          const monthYear = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                          suggestions.push({ label, monthYear });
+                        }
+                        return suggestions.map(({ label, monthYear }) => (
+                          <button
+                            key={monthYear}
+                            onClick={() => setPendingNewMonth({ label, monthYear })}
+                            className="px-4 py-3 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-center font-medium"
+                          >
+                            {label}
+                          </button>
+                        ));
+                      })()}
+                    </div>
+                  </div>
 
-              {workspaces.length > 0 && (
-                <div className="text-sm text-gray-500 bg-gray-50 p-3 rounded-lg">
-                  <strong>Tip:</strong> When you select a month, you'll be asked if you want to copy your extinguisher list from the current workspace.
-                </div>
+                  <button
+                    onClick={() => setShowCreateWorkspace(false)}
+                    className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition"
+                  >
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-gray-600">
+                    How do you want to start this inspection month?
+                  </p>
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => createWorkspace(pendingNewMonth.label, null, pendingNewMonth.monthYear)}
+                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-left font-medium"
+                    >
+                      Start blank — I&apos;ll import my extinguisher list later
+                    </button>
+                    {workspaces.length > 0 && (() => {
+                      const copyFromWs = getCurrentWorkspace() || [...workspaces].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
+                      return copyFromWs ? (
+                        <button
+                          onClick={() => createWorkspace(pendingNewMonth.label, copyFromWs.id, pendingNewMonth.monthYear)}
+                          className="w-full px-4 py-3 border-2 border-green-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition text-left font-medium"
+                        >
+                          Copy extinguishers from &quot;{copyFromWs.label}&quot; (all items start as pending)
+                        </button>
+                      ) : null;
+                    })()}
+                  </div>
+                  <button
+                    onClick={() => setPendingNewMonth(null)}
+                    className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition"
+                  >
+                    Back
+                  </button>
+                </>
               )}
-
-              <button
-                onClick={() => setShowCreateWorkspace(false)}
-                className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition"
-              >
-                Cancel
-              </button>
             </div>
           </div>
         </div>
