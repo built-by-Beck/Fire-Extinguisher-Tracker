@@ -105,9 +105,6 @@ const SECTIONS = [
   const ownerOverride = (qs.get('owner') || '').trim() || null;
   const dataOwnerId = ownerOverride || (user?.uid || null);
   const readOnly = !!ownerOverride && ownerOverride !== (user?.uid || null);
-  // #region agent log
-  if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:ownerOverride',message:'owner/readOnly',data:{search:location.search,ownerOverride,readOnly,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{}); }
-  // #endregion
 
   // Generate short share code
   const generateShortCode = () => {
@@ -132,9 +129,6 @@ const SECTIONS = [
         setSharePublic(!!d.publicRead);
         const sc = d.shortCode || '';
         setShareShortCode(sc);
-        // #region agent log
-        if (sc && typeof fetch === 'function') { const base = (import.meta.env.BASE_URL || '').replace(/\/$/, ''); const link = `${typeof window !== 'undefined' ? window.location.origin : ''}${base}/login?code=${sc}`; fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:openShareSettings',message:'share link on load',data:{base,shareShortCode:sc,link},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{}); }
-        // #endregion
         if (d.expiresAt && d.expiresAt.toDate) {
           const iso = d.expiresAt.toDate().toISOString();
           setShareExpiry(iso.slice(0,16));
@@ -838,7 +832,6 @@ const SECTIONS = [
       const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
 
       // If copying from another workspace, copy all extinguishers and reset them to pending
-      // This ensures a fresh start for the new month with all extinguishers at 0% complete
       if (copyFrom) {
         const sourceQuery = query(
           collection(db, 'extinguishers'),
@@ -914,6 +907,44 @@ const SECTIONS = [
       console.error('Error creating workspace:', error);
       alert('Error creating workspace. Please try again.');
       return null;
+    }
+  };
+
+  const resetCurrentWorkspaceToPending = async () => {
+    if (!user || !currentWorkspaceId) return;
+    const workspace = getCurrentWorkspace();
+    const label = workspace?.label || 'this month';
+    if (!window.confirm(`Reset all extinguishers in "${label}" to pending?\n\nThis clears current inspection status (pass/fail) so you can start the month over. Past inspection history is kept.`)) return;
+    try {
+      const extQuery = query(
+        collection(db, 'extinguishers'),
+        where('userId', '==', user.uid),
+        where('workspaceId', '==', currentWorkspaceId)
+      );
+      const snap = await getDocs(extQuery);
+      if (snap.docs.length === 0) {
+        alert('No extinguishers found in this workspace.');
+        return;
+      }
+      const BATCH_SIZE = 500;
+      const updates = {
+        status: 'pending',
+        checkedDate: null,
+        notes: '',
+        checklistData: null,
+        lastInspectionPhotoUrl: null,
+        lastInspectionGps: null
+      };
+      for (let i = 0; i < snap.docs.length; i += BATCH_SIZE) {
+        const batch = writeBatch(db);
+        const chunk = snap.docs.slice(i, i + BATCH_SIZE);
+        chunk.forEach(docSnap => batch.update(docSnap.ref, updates));
+        await batch.commit();
+      }
+      alert(`All ${snap.docs.length} extinguishers in "${label}" have been reset to pending.`);
+    } catch (error) {
+      console.error('Error resetting to pending:', error);
+      alert('Error resetting. Please try again.');
     }
   };
 
@@ -3143,6 +3174,18 @@ const SECTIONS = [
                 <Plus size={20} />
                 New Inspection Month
               </button>
+              {getCurrentWorkspace() && (
+                <button
+                  onClick={() => {
+                    setShowMenu(false);
+                    resetCurrentWorkspaceToPending();
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded hover:bg-amber-700 transition w-full"
+                >
+                  <RotateCcw size={20} />
+                  Reset this month to pending
+                </button>
+              )}
               {workspaces.length > 1 && (
                 <button
                   onClick={() => {
@@ -4831,9 +4874,6 @@ const SECTIONS = [
                           try {
                             const base = (import.meta.env.BASE_URL || '').replace(/\/$/, '');
                             const link = `${window.location.origin}${base}/login?code=${shareShortCode}`;
-                            // #region agent log
-                            if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.jsx:copyShareLink',message:'share link built',data:{base,shareShortCode,origin:window.location.origin,link},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{}); }
-                            // #endregion
                             await navigator.clipboard.writeText(link);
                             alert('Share link copied!');
                           } catch {
