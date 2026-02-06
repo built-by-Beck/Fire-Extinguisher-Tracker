@@ -16,9 +16,11 @@ const ExtinguisherDetailView = ({
   extinguishers,
   onPass,
   onFail,
+  onReset,
   onEdit,
   onReplace,
   onSaveNotes,
+  onUpdateManufacturedDate,
   onUpdateExpirationDate
 }) => {
   const { assetId } = useParams();
@@ -53,6 +55,10 @@ const ExtinguisherDetailView = ({
   const [notesSaved, setNotesSaved] = useState(false);
   const notesSaveTimeoutRef = useRef(null);
 
+  // Manufactured date inline edit state
+  const [editingManufactured, setEditingManufactured] = useState(false);
+  const [tempManufacturedDate, setTempManufacturedDate] = useState('');
+
   // Expiration date inline edit state
   const [editingExpiration, setEditingExpiration] = useState(false);
   const [tempExpirationDate, setTempExpirationDate] = useState('');
@@ -86,6 +92,7 @@ const ExtinguisherDetailView = ({
           tagSignedDated: 'pass'
         });
       }
+      setTempManufacturedDate(extinguisher.manufacturedDate || '');
       setTempExpirationDate(extinguisher.expirationDate || '');
     }
   }, [extinguisher?.id]);
@@ -224,6 +231,22 @@ const ExtinguisherDetailView = ({
     onReplace?.(extinguisher);
   };
 
+  const handleResetClick = () => {
+    onReset?.(extinguisher);
+  };
+
+  const handleSaveManufacturedDate = async () => {
+    if (onUpdateManufacturedDate) {
+      await onUpdateManufacturedDate(extinguisher, tempManufacturedDate);
+      // Auto-update the local expiration date display
+      if (tempManufacturedDate) {
+        const mfgYear = new Date(tempManufacturedDate).getFullYear();
+        setTempExpirationDate(`${mfgYear + 6}-12-31`);
+      }
+    }
+    setEditingManufactured(false);
+  };
+
   const handleSaveExpirationDate = async () => {
     if (onUpdateExpirationDate) {
       await onUpdateExpirationDate(extinguisher, tempExpirationDate);
@@ -298,6 +321,54 @@ const ExtinguisherDetailView = ({
                 <Calendar size={16} />
                 {extinguisher.checkedDate ? formatDate(extinguisher.checkedDate) : 'Never'}
               </p>
+            </div>
+          </div>
+
+          {/* Manufactured Date - Inline Editable */}
+          <div className="pt-4 border-t border-gray-700 mt-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CalendarClock size={16} className="text-gray-400" />
+                <span className="text-sm text-gray-400">Manufactured Date:</span>
+              </div>
+              {editingManufactured ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={tempManufacturedDate}
+                    onChange={(e) => setTempManufacturedDate(e.target.value)}
+                    className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleSaveManufacturedDate}
+                    className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-xs"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingManufactured(false);
+                      setTempManufacturedDate(extinguisher.manufacturedDate || '');
+                    }}
+                    className="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingManufactured(true)}
+                  className="flex items-center gap-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+                >
+                  {extinguisher.manufacturedDate ? (
+                    <span>{formatExpirationDate(extinguisher.manufacturedDate)}</span>
+                  ) : (
+                    <span className="text-gray-400">Add Date</span>
+                  )}
+                  <Edit2 size={14} />
+                </button>
+              )}
             </div>
           </div>
 
@@ -657,18 +728,31 @@ const ExtinguisherDetailView = ({
         {/* Already Inspected Status Message */}
         {!isPending && (
           <div className={`${currentStatus.bg} rounded-lg p-4 mb-4 border ${currentStatus.color.replace('text-', 'border-')}`}>
-            <div className="flex items-center gap-3">
-              <StatusIcon size={24} className={currentStatus.color} />
-              <div>
-                <span className={`font-bold ${currentStatus.color}`}>
-                  Already {currentStatus.label}
-                </span>
-                <span className="text-gray-400 text-sm ml-2">
-                  on {formatDate(extinguisher.checkedDate)}
-                </span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <StatusIcon size={24} className={currentStatus.color} />
+                <div>
+                  <span className={`font-bold ${currentStatus.color}`}>
+                    Already {currentStatus.label}
+                  </span>
+                  <span className="text-gray-400 text-sm ml-2">
+                    on {formatDate(extinguisher.checkedDate)}
+                  </span>
+                </div>
               </div>
+              {onReset && (
+                <button
+                  onClick={handleResetClick}
+                  className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-semibold transition"
+                >
+                  <RotateCcw size={18} />
+                  Reset to Pending
+                </button>
+              )}
             </div>
-            <p className="text-gray-400 text-sm mt-2">Reset status to re-inspect this extinguisher.</p>
+            {onReset && (
+              <p className="text-gray-400 text-sm mt-2">Click "Reset to Pending" to re-inspect this extinguisher.</p>
+            )}
           </div>
         )}
 

@@ -69,6 +69,7 @@ const SECTIONS = [
     parentLocation: '',
     section: 'Main Hospital',
     category: 'standard',
+    manufacturedDate: '',
     expirationDate: ''
   });
   const [newItemPhoto, setNewItemPhoto] = useState(null);
@@ -1782,6 +1783,7 @@ const SECTIONS = [
         parentLocation: newItem.parentLocation.trim(),
         section: newItem.section,
         category: newItem.category || 'standard',
+        manufacturedDate: newItem.manufacturedDate || null,
         expirationDate: newItem.expirationDate || null,
         status: 'pending',
         checkedDate: null,
@@ -1803,6 +1805,7 @@ const SECTIONS = [
         parentLocation: '',
         section: 'Main Hospital',
         category: 'standard',
+        manufacturedDate: '',
         expirationDate: ''
       });
       setNewItemPhoto(null);
@@ -1981,6 +1984,7 @@ const SECTIONS = [
         parentLocation: editItem.parentLocation,
         section: editItem.section,
         category: editItem.category || 'standard',
+        manufacturedDate: editItem.manufacturedDate || null,
         expirationDate: editItem.expirationDate || null,
         location: editItem.location || null
       }, { merge: true });
@@ -2565,6 +2569,38 @@ const SECTIONS = [
   // helpers for SectionDetail actions
   const handlePass = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'pass', notesSummary, inspectionData);
   const handleFail = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'fail', notesSummary, inspectionData);
+  const handleResetToPending = async (item) => {
+    if (!window.confirm(`Reset this extinguisher to pending?\n\nAsset ID: ${item.assetId}\n\nThis will clear the current inspection status so you can re-inspect it. Past inspection history is preserved.`)) {
+      return;
+    }
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      await setDoc(docRef, {
+        status: 'pending',
+        checkedDate: null,
+        notes: '',
+        checklistData: null,
+        lastInspectionPhotoUrl: null,
+        lastInspectionGps: null
+      }, { merge: true });
+      // Optimistically update local state
+      setExtinguishers(prev => prev.map(e => {
+        if (!e || e.id !== item.id) return e;
+        return {
+          ...e,
+          status: 'pending',
+          checkedDate: null,
+          notes: '',
+          checklistData: null,
+          lastInspectionPhotoUrl: null,
+          lastInspectionGps: null
+        };
+      }));
+    } catch (error) {
+      console.error('Error resetting to pending:', error);
+      alert('Error resetting extinguisher. Please try again.');
+    }
+  };
   const handleOpenReplace = (item) => {
     setReplaceItem(item);
     setReplaceForm({
@@ -2574,6 +2610,21 @@ const SECTIONS = [
       manufactureDate: '',
       notes: ''
     });
+  };
+  const handleUpdateManufacturedDate = async (item, manufacturedDate) => {
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      const updates = { manufacturedDate: manufacturedDate || null };
+      // Auto-calculate expiration: Dec 31 of (mfg year + 6)
+      if (manufacturedDate) {
+        const mfgYear = new Date(manufacturedDate).getFullYear();
+        updates.expirationDate = `${mfgYear + 6}-12-31`;
+      }
+      await setDoc(docRef, updates, { merge: true });
+    } catch (error) {
+      console.error('Error updating manufactured date:', error);
+      alert('Error saving manufactured date. Please try again.');
+    }
   };
   const handleUpdateExpirationDate = async (item, expirationDate) => {
     try {
@@ -3711,9 +3762,11 @@ const SECTIONS = [
                   extinguishers={extinguishers}
                   onPass={readOnly ? undefined : handlePass}
                   onFail={readOnly ? undefined : handleFail}
+                  onReset={readOnly ? undefined : handleResetToPending}
                   onEdit={readOnly ? undefined : handleEdit}
                   onReplace={readOnly ? undefined : handleOpenReplace}
                   onSaveNotes={readOnly ? undefined : handleSaveNotes}
+                  onUpdateManufacturedDate={readOnly ? undefined : handleUpdateManufacturedDate}
                   onUpdateExpirationDate={readOnly ? undefined : handleUpdateExpirationDate}
                 />
               }
@@ -4048,6 +4101,25 @@ const SECTIONS = [
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Manufactured Date</label>
+                <input
+                  type="date"
+                  value={newItem.manufacturedDate}
+                  onChange={(e) => {
+                    const mfgDate = e.target.value;
+                    const updates = { ...newItem, manufacturedDate: mfgDate };
+                    if (mfgDate) {
+                      const mfgYear = new Date(mfgDate).getFullYear();
+                      updates.expirationDate = `${mfgYear + 6}-12-31`;
+                    }
+                    setNewItem(updates);
+                  }}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">Date when extinguisher was manufactured</p>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Date</label>
                 <input
                   type="date"
@@ -4055,7 +4127,7 @@ const SECTIONS = [
                   onChange={(e) => setNewItem({...newItem, expirationDate: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 />
-                <p className="text-xs text-gray-500 mt-1">Date when extinguisher expires or needs service</p>
+                <p className="text-xs text-gray-500 mt-1">Auto-calculated as Dec 31, 6 years from manufactured date</p>
               </div>
 
               <div>
@@ -4243,6 +4315,25 @@ const SECTIONS = [
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Manufactured Date</label>
+                <input
+                  type="date"
+                  value={editItem.manufacturedDate || ''}
+                  onChange={(e) => {
+                    const mfgDate = e.target.value;
+                    const updates = { ...editItem, manufacturedDate: mfgDate };
+                    if (mfgDate) {
+                      const mfgYear = new Date(mfgDate).getFullYear();
+                      updates.expirationDate = `${mfgYear + 6}-12-31`;
+                    }
+                    setEditItem(updates);
+                  }}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">Date when extinguisher was manufactured</p>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Date</label>
                 <input
                   type="date"
@@ -4250,7 +4341,7 @@ const SECTIONS = [
                   onChange={(e) => setEditItem({...editItem, expirationDate: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 />
-                <p className="text-xs text-gray-500 mt-1">Date when extinguisher expires or needs service</p>
+                <p className="text-xs text-gray-500 mt-1">Auto-calculated as Dec 31, 6 years from manufactured date</p>
               </div>
 
               {/* GPS for edit */}
