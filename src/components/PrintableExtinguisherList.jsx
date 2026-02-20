@@ -15,8 +15,8 @@ export default function PrintableExtinguisherList({ extinguishers = [] }) {
       parentLocation: it.parentLocation || '',
       category: it.category || '',
       status: (it.status || '').toUpperCase(),
-      manufacturedDate: it.manufacturedDate || '',
-      expirationDate: it.expirationDate || '',
+      manufactureYear: it.manufactureYear || it.manufacturedDate || '',
+      expirationYear: it.expirationYear || it.expirationDate || '',
       checkedDate: it.checkedDate || it.checkedAt || '',
       checkedBy: it.checkedBy || ''
     }));
@@ -101,8 +101,8 @@ export default function PrintableExtinguisherList({ extinguishers = [] }) {
                 <th className="border border-gray-300 px-2 py-1 text-left w-[220px]">Parent Location</th>
                 <th className="border border-gray-300 px-2 py-1 text-left w-[120px]">Category</th>
                 <th className="border border-gray-300 px-2 py-1 text-left w-[90px]">Status</th>
-                <th className="border border-gray-300 px-2 py-1 text-left w-[140px]">Mfg Date</th>
-                <th className="border border-gray-300 px-2 py-1 text-left w-[140px]">Expiration</th>
+                <th className="border border-gray-300 px-2 py-1 text-left w-[90px]">Mfg Year</th>
+                <th className="border border-gray-300 px-2 py-1 text-left w-[90px]">Exp Year</th>
                 <th className="border border-gray-300 px-2 py-1 text-left w-[150px]">Last Check</th>
                 <th className="border border-gray-300 px-2 py-1 text-left w-[160px]">Checked By</th>
               </tr>
@@ -117,8 +117,8 @@ export default function PrintableExtinguisherList({ extinguishers = [] }) {
                   <td className="border border-gray-300 px-2 py-1 break-words">{r.parentLocation}</td>
                   <td className="border border-gray-300 px-2 py-1 break-words">{r.category}</td>
                   <td className="border border-gray-300 px-2 py-1 break-words">{r.status}</td>
-                  <td className="border border-gray-300 px-2 py-1 break-words">{formatDate(r.manufacturedDate)}</td>
-                  <td className="border border-gray-300 px-2 py-1 break-words">{formatDate(r.expirationDate)}</td>
+                  <td className="border border-gray-300 px-2 py-1 break-words">{r.manufactureYear}</td>
+                  <td className="border border-gray-300 px-2 py-1 break-words">{r.expirationYear}</td>
                   <td className="border border-gray-300 px-2 py-1 break-words">{formatDate(r.checkedDate)}</td>
                   <td className="border border-gray-300 px-2 py-1 break-words">{r.checkedBy}</td>
                 </tr>

@@ -54,7 +54,7 @@ const SECTIONS = [
     assetId: '',
     serial: '',
     reason: '',
-    manufactureDate: '',
+    manufactureYear: '',
     notes: ''
   });
   const [showMenu, setShowMenu] = useState(false);
@@ -69,8 +69,8 @@ const SECTIONS = [
     parentLocation: '',
     section: 'Main Hospital',
     category: 'standard',
-    manufacturedDate: '',
-    expirationDate: ''
+    manufactureYear: '',
+    expirationYear: ''
   });
   const [newItemPhoto, setNewItemPhoto] = useState(null);
   const [newItemGps, setNewItemGps] = useState(null);
@@ -1783,8 +1783,8 @@ const SECTIONS = [
         parentLocation: newItem.parentLocation.trim(),
         section: newItem.section,
         category: newItem.category || 'standard',
-        manufacturedDate: newItem.manufacturedDate || null,
-        expirationDate: newItem.expirationDate || null,
+        manufactureYear: newItem.manufactureYear || null,
+        expirationYear: newItem.expirationYear || null,
         status: 'pending',
         checkedDate: null,
         notes: '',
@@ -1805,8 +1805,8 @@ const SECTIONS = [
         parentLocation: '',
         section: 'Main Hospital',
         category: 'standard',
-        manufacturedDate: '',
-        expirationDate: ''
+        manufactureYear: '',
+        expirationYear: ''
       });
       setNewItemPhoto(null);
       setNewItemGps(null);
@@ -1984,8 +1984,8 @@ const SECTIONS = [
         parentLocation: editItem.parentLocation,
         section: editItem.section,
         category: editItem.category || 'standard',
-        manufacturedDate: editItem.manufacturedDate || null,
-        expirationDate: editItem.expirationDate || null,
+        manufactureYear: editItem.manufactureYear || null,
+        expirationYear: editItem.expirationYear || null,
         location: editItem.location || null
       }, { merge: true });
 
@@ -2032,7 +2032,7 @@ const SECTIONS = [
 
   const handleReplaceExtinguisher = async (oldItem, replacementData) => {
     try {
-      const { assetId, serial, reason, manufactureDate, notes } = replacementData;
+      const { assetId, serial, reason, manufactureYear, notes } = replacementData;
 
       if (!serial || !serial.trim()) {
         alert('Serial number is required for replacement.');
@@ -2055,7 +2055,7 @@ const SECTIONS = [
         oldAssetId: oldItem.assetId,
         newAssetId: (assetId.trim() || oldItem.assetId),
         reason: reason.trim() || '',
-        newManufactureDate: manufactureDate.trim() || '',
+        newManufactureYear: manufactureYear.trim() || '',
         notes: notes.trim() || '',
         replacedBy: user?.email || 'Current User',
         // Preserve the old extinguisher's status at time of replacement
@@ -2086,7 +2086,8 @@ const SECTIONS = [
         notes: notes.trim() || `Replaced on ${new Date(replacementDate).toLocaleDateString()}`,
         // Reset checklist data for the new extinguisher (fresh start)
         checklistData: null,
-        manufactureYear: manufactureDate.trim() || '',
+        manufactureYear: manufactureYear.trim() || '',
+        expirationYear: manufactureYear.trim() ? String(parseInt(manufactureYear.trim()) + 6) : '',
         category: 'standard', // New extinguisher is standard, not spare/replaced
         // Keep user/workspace info
         userId: user.uid,
@@ -2122,7 +2123,7 @@ const SECTIONS = [
         assetId: '',
         serial: '',
         reason: '',
-        manufactureDate: '',
+        manufactureYear: '',
         notes: ''
       });
       setSelectedItem(null);
@@ -2222,7 +2223,7 @@ const SECTIONS = [
         baseData['Last Replacement Old Serial'] = latestReplacement.oldSerial || '';
         baseData['Last Replacement New Serial'] = latestReplacement.newSerial || '';
         baseData['Last Replacement Reason'] = latestReplacement.reason || '';
-        baseData['Last Replacement Manufacture Date'] = latestReplacement.newManufactureDate || '';
+        baseData['Last Replacement Manufacture Year'] = latestReplacement.newManufactureYear || latestReplacement.newManufactureDate || '';
         baseData['Last Replacement Notes'] = latestReplacement.notes || '';
         baseData['Last Replaced By'] = latestReplacement.replacedBy || '';
       }
@@ -2607,32 +2608,30 @@ const SECTIONS = [
       assetId: item.assetId || '',
       serial: '',
       reason: '',
-      manufactureDate: '',
+      manufactureYear: '',
       notes: ''
     });
   };
-  const handleUpdateManufacturedDate = async (item, manufacturedDate) => {
+  const handleUpdateManufactureYear = async (item, year) => {
     try {
       const docRef = doc(db, 'extinguishers', item.id);
-      const updates = { manufacturedDate: manufacturedDate || null };
-      // Auto-calculate expiration: Dec 31 of (mfg year + 6)
-      if (manufacturedDate) {
-        const mfgYear = new Date(manufacturedDate).getFullYear();
-        updates.expirationDate = `${mfgYear + 6}-12-31`;
+      const updates = { manufactureYear: year || null };
+      if (year) {
+        updates.expirationYear = String(parseInt(year) + 6);
       }
       await setDoc(docRef, updates, { merge: true });
     } catch (error) {
-      console.error('Error updating manufactured date:', error);
-      alert('Error saving manufactured date. Please try again.');
+      console.error('Error updating manufacture year:', error);
+      alert('Error saving manufacture year. Please try again.');
     }
   };
-  const handleUpdateExpirationDate = async (item, expirationDate) => {
+  const handleUpdateExpirationYear = async (item, year) => {
     try {
       const docRef = doc(db, 'extinguishers', item.id);
-      await setDoc(docRef, { expirationDate: expirationDate || null }, { merge: true });
+      await setDoc(docRef, { expirationYear: year || null }, { merge: true });
     } catch (error) {
-      console.error('Error updating expiration date:', error);
-      alert('Error saving expiration date. Please try again.');
+      console.error('Error updating expiration year:', error);
+      alert('Error saving expiration year. Please try again.');
     }
   };
 
@@ -3766,8 +3765,8 @@ const SECTIONS = [
                   onEdit={readOnly ? undefined : handleEdit}
                   onReplace={readOnly ? undefined : handleOpenReplace}
                   onSaveNotes={readOnly ? undefined : handleSaveNotes}
-                  onUpdateManufacturedDate={readOnly ? undefined : handleUpdateManufacturedDate}
-                  onUpdateExpirationDate={readOnly ? undefined : handleUpdateExpirationDate}
+                  onUpdateManufactureYear={readOnly ? undefined : handleUpdateManufactureYear}
+                  onUpdateExpirationYear={readOnly ? undefined : handleUpdateExpirationYear}
                 />
               }
             />
@@ -4101,33 +4100,42 @@ const SECTIONS = [
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Manufactured Date</label>
-                <input
-                  type="date"
-                  value={newItem.manufacturedDate}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Manufacture Year</label>
+                <select
+                  value={newItem.manufactureYear}
                   onChange={(e) => {
-                    const mfgDate = e.target.value;
-                    const updates = { ...newItem, manufacturedDate: mfgDate };
-                    if (mfgDate) {
-                      const mfgYear = new Date(mfgDate).getFullYear();
-                      updates.expirationDate = `${mfgYear + 6}-12-31`;
+                    const year = e.target.value;
+                    const updates = { ...newItem, manufactureYear: year };
+                    if (year) {
+                      updates.expirationYear = String(parseInt(year) + 6);
+                    } else {
+                      updates.expirationYear = '';
                     }
                     setNewItem(updates);
                   }}
                   className="w-full p-2 border border-gray-300 rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">Date when extinguisher was manufactured</p>
+                >
+                  <option value="">Select Year</option>
+                  {Array.from({length: 21}, (_, i) => 2010 + i).map(y => (
+                    <option key={y} value={String(y)}>{y}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Year manufactured</p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Date</label>
-                <input
-                  type="date"
-                  value={newItem.expirationDate}
-                  onChange={(e) => setNewItem({...newItem, expirationDate: e.target.value})}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Year</label>
+                <select
+                  value={newItem.expirationYear}
+                  onChange={(e) => setNewItem({...newItem, expirationYear: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">Auto-calculated as Dec 31, 6 years from manufactured date</p>
+                >
+                  <option value="">Select Year</option>
+                  {Array.from({length: 21}, (_, i) => 2016 + i).map(y => (
+                    <option key={y} value={String(y)}>{y}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Auto-calculated as manufacture year + 6</p>
               </div>
 
               <div>
@@ -4315,33 +4323,42 @@ const SECTIONS = [
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Manufactured Date</label>
-                <input
-                  type="date"
-                  value={editItem.manufacturedDate || ''}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Manufacture Year</label>
+                <select
+                  value={editItem.manufactureYear || ''}
                   onChange={(e) => {
-                    const mfgDate = e.target.value;
-                    const updates = { ...editItem, manufacturedDate: mfgDate };
-                    if (mfgDate) {
-                      const mfgYear = new Date(mfgDate).getFullYear();
-                      updates.expirationDate = `${mfgYear + 6}-12-31`;
+                    const year = e.target.value;
+                    const updates = { ...editItem, manufactureYear: year };
+                    if (year) {
+                      updates.expirationYear = String(parseInt(year) + 6);
+                    } else {
+                      updates.expirationYear = '';
                     }
                     setEditItem(updates);
                   }}
                   className="w-full p-2 border border-gray-300 rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">Date when extinguisher was manufactured</p>
+                >
+                  <option value="">Select Year</option>
+                  {Array.from({length: 21}, (_, i) => 2010 + i).map(y => (
+                    <option key={y} value={String(y)}>{y}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Year manufactured</p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Date</label>
-                <input
-                  type="date"
-                  value={editItem.expirationDate || ''}
-                  onChange={(e) => setEditItem({...editItem, expirationDate: e.target.value})}
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Year</label>
+                <select
+                  value={editItem.expirationYear || ''}
+                  onChange={(e) => setEditItem({...editItem, expirationYear: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg"
-                />
-                <p className="text-xs text-gray-500 mt-1">Auto-calculated as Dec 31, 6 years from manufactured date</p>
+                >
+                  <option value="">Select Year</option>
+                  {Array.from({length: 21}, (_, i) => 2016 + i).map(y => (
+                    <option key={y} value={String(y)}>{y}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Auto-calculated as manufacture year + 6</p>
               </div>
 
               {/* GPS for edit */}
@@ -4470,7 +4487,7 @@ const SECTIONS = [
                   assetId: '',
                   serial: '',
                   reason: '',
-                  manufactureDate: '',
+                  manufactureYear: '',
                   notes: ''
                 });
               }}>
@@ -4534,16 +4551,19 @@ const SECTIONS = [
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Manufacture Date of New Extinguisher
+                  Manufacture Year of New Extinguisher
                 </label>
-                <input
-                  type="text"
-                  value={replaceForm.manufactureDate}
-                  onChange={(e) => setReplaceForm({...replaceForm, manufactureDate: e.target.value})}
+                <select
+                  value={replaceForm.manufactureYear}
+                  onChange={(e) => setReplaceForm({...replaceForm, manufactureYear: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg"
-                  placeholder="e.g., 2025"
-                />
-                <p className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year maintenance, or hydrostatic test date</p>
+                >
+                  <option value="">Select Year</option>
+                  {Array.from({length: 21}, (_, i) => 2010 + i).map(y => (
+                    <option key={y} value={String(y)}>{y}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Expiration auto-calculated as manufacture year + 6</p>
               </div>
 
               <div>
@@ -4589,7 +4609,7 @@ const SECTIONS = [
                     assetId: '',
                     serial: '',
                     reason: '',
-                    manufactureDate: '',
+                    manufactureYear: '',
                     notes: ''
                   });
                 }}

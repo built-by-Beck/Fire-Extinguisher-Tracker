@@ -20,8 +20,8 @@ const ExtinguisherDetailView = ({
   onEdit,
   onReplace,
   onSaveNotes,
-  onUpdateManufacturedDate,
-  onUpdateExpirationDate
+  onUpdateManufactureYear,
+  onUpdateExpirationYear
 }) => {
   const { assetId } = useParams();
   const navigate = useNavigate();
@@ -55,13 +55,13 @@ const ExtinguisherDetailView = ({
   const [notesSaved, setNotesSaved] = useState(false);
   const notesSaveTimeoutRef = useRef(null);
 
-  // Manufactured date inline edit state
+  // Manufacture year inline edit state
   const [editingManufactured, setEditingManufactured] = useState(false);
-  const [tempManufacturedDate, setTempManufacturedDate] = useState('');
+  const [tempManufactureYear, setTempManufactureYear] = useState('');
 
-  // Expiration date inline edit state
+  // Expiration year inline edit state
   const [editingExpiration, setEditingExpiration] = useState(false);
-  const [tempExpirationDate, setTempExpirationDate] = useState('');
+  const [tempExpirationYear, setTempExpirationYear] = useState('');
 
   // Find the extinguisher by assetId
   const extinguisher = extinguishers.find(e => e.assetId === assetId);
@@ -92,8 +92,8 @@ const ExtinguisherDetailView = ({
           tagSignedDated: 'pass'
         });
       }
-      setTempManufacturedDate(extinguisher.manufacturedDate || '');
-      setTempExpirationDate(extinguisher.expirationDate || '');
+      setTempManufactureYear(extinguisher.manufactureYear || extinguisher.manufacturedDate || '');
+      setTempExpirationYear(extinguisher.expirationYear || extinguisher.expirationDate || '');
     }
   }, [extinguisher?.id]);
 
@@ -189,16 +189,6 @@ const ExtinguisherDetailView = ({
     });
   };
 
-  const formatExpirationDate = (dateString) => {
-    if (!dateString) return null;
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
-
   const totalPhotos = (extinguisher.photos?.length || 0) + inspectionHistory.filter(h => h.photoUrl).length;
 
   const checklistSummary = () => {
@@ -235,21 +225,19 @@ const ExtinguisherDetailView = ({
     onReset?.(extinguisher);
   };
 
-  const handleSaveManufacturedDate = async () => {
-    if (onUpdateManufacturedDate) {
-      await onUpdateManufacturedDate(extinguisher, tempManufacturedDate);
-      // Auto-update the local expiration date display
-      if (tempManufacturedDate) {
-        const mfgYear = new Date(tempManufacturedDate).getFullYear();
-        setTempExpirationDate(`${mfgYear + 6}-12-31`);
+  const handleSaveManufactureYear = async () => {
+    if (onUpdateManufactureYear) {
+      await onUpdateManufactureYear(extinguisher, tempManufactureYear);
+      if (tempManufactureYear) {
+        setTempExpirationYear(String(parseInt(tempManufactureYear) + 6));
       }
     }
     setEditingManufactured(false);
   };
 
-  const handleSaveExpirationDate = async () => {
-    if (onUpdateExpirationDate) {
-      await onUpdateExpirationDate(extinguisher, tempExpirationDate);
+  const handleSaveExpirationYear = async () => {
+    if (onUpdateExpirationYear) {
+      await onUpdateExpirationYear(extinguisher, tempExpirationYear);
     }
     setEditingExpiration(false);
   };
@@ -294,7 +282,7 @@ const ExtinguisherDetailView = ({
               <h1 className="text-2xl font-bold mb-2">Asset #{extinguisher.assetId}</h1>
               <div className="space-y-1 text-gray-300">
                 <p><span className="font-semibold">Serial:</span> {extinguisher.serial || 'N/A'}</p>
-                <p><span className="font-semibold">Manufacture Date:</span> {extinguisher.manufactureDate || extinguisher.manufactureYear || 'N/A'}</p>
+                <p><span className="font-semibold">Manufacture Year:</span> {extinguisher.manufactureYear || extinguisher.manufacturedDate || 'N/A'}</p>
                 <p><span className="font-semibold">Section:</span> {extinguisher.section}</p>
               </div>
             </div>
@@ -324,24 +312,28 @@ const ExtinguisherDetailView = ({
             </div>
           </div>
 
-          {/* Manufactured Date - Inline Editable */}
+          {/* Manufacture Year - Inline Editable */}
           <div className="pt-4 border-t border-gray-700 mt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CalendarClock size={16} className="text-gray-400" />
-                <span className="text-sm text-gray-400">Manufactured Date:</span>
+                <span className="text-sm text-gray-400">Manufacture Year:</span>
               </div>
               {editingManufactured ? (
                 <div className="flex items-center gap-2">
-                  <input
-                    type="date"
-                    value={tempManufacturedDate}
-                    onChange={(e) => setTempManufacturedDate(e.target.value)}
+                  <select
+                    value={tempManufactureYear}
+                    onChange={(e) => setTempManufactureYear(e.target.value)}
                     className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
                     autoFocus
-                  />
+                  >
+                    <option value="">Select Year</option>
+                    {Array.from({length: 21}, (_, i) => 2010 + i).map(y => (
+                      <option key={y} value={String(y)}>{y}</option>
+                    ))}
+                  </select>
                   <button
-                    onClick={handleSaveManufacturedDate}
+                    onClick={handleSaveManufactureYear}
                     className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-xs"
                   >
                     Save
@@ -349,7 +341,7 @@ const ExtinguisherDetailView = ({
                   <button
                     onClick={() => {
                       setEditingManufactured(false);
-                      setTempManufacturedDate(extinguisher.manufacturedDate || '');
+                      setTempManufactureYear(extinguisher.manufactureYear || extinguisher.manufacturedDate || '');
                     }}
                     className="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs"
                   >
@@ -361,10 +353,10 @@ const ExtinguisherDetailView = ({
                   onClick={() => setEditingManufactured(true)}
                   className="flex items-center gap-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
                 >
-                  {extinguisher.manufacturedDate ? (
-                    <span>{formatExpirationDate(extinguisher.manufacturedDate)}</span>
+                  {(extinguisher.manufactureYear || extinguisher.manufacturedDate) ? (
+                    <span>{extinguisher.manufactureYear || extinguisher.manufacturedDate}</span>
                   ) : (
-                    <span className="text-gray-400">Add Date</span>
+                    <span className="text-gray-400">Add Year</span>
                   )}
                   <Edit2 size={14} />
                 </button>
@@ -372,24 +364,28 @@ const ExtinguisherDetailView = ({
             </div>
           </div>
 
-          {/* Expiration Date - Inline Editable */}
+          {/* Expiration Year - Inline Editable */}
           <div className="pt-4 border-t border-gray-700 mt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CalendarClock size={16} className="text-gray-400" />
-                <span className="text-sm text-gray-400">Expiration Date:</span>
+                <span className="text-sm text-gray-400">Expiration Year:</span>
               </div>
               {editingExpiration ? (
                 <div className="flex items-center gap-2">
-                  <input
-                    type="date"
-                    value={tempExpirationDate}
-                    onChange={(e) => setTempExpirationDate(e.target.value)}
+                  <select
+                    value={tempExpirationYear}
+                    onChange={(e) => setTempExpirationYear(e.target.value)}
                     className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
                     autoFocus
-                  />
+                  >
+                    <option value="">Select Year</option>
+                    {Array.from({length: 21}, (_, i) => 2016 + i).map(y => (
+                      <option key={y} value={String(y)}>{y}</option>
+                    ))}
+                  </select>
                   <button
-                    onClick={handleSaveExpirationDate}
+                    onClick={handleSaveExpirationYear}
                     className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-xs"
                   >
                     Save
@@ -397,7 +393,7 @@ const ExtinguisherDetailView = ({
                   <button
                     onClick={() => {
                       setEditingExpiration(false);
-                      setTempExpirationDate(extinguisher.expirationDate || '');
+                      setTempExpirationYear(extinguisher.expirationYear || extinguisher.expirationDate || '');
                     }}
                     className="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs"
                   >
@@ -409,10 +405,10 @@ const ExtinguisherDetailView = ({
                   onClick={() => setEditingExpiration(true)}
                   className="flex items-center gap-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
                 >
-                  {extinguisher.expirationDate ? (
-                    <span>{formatExpirationDate(extinguisher.expirationDate)}</span>
+                  {(extinguisher.expirationYear || extinguisher.expirationDate) ? (
+                    <span>{extinguisher.expirationYear || extinguisher.expirationDate}</span>
                   ) : (
-                    <span className="text-gray-400">Add Date</span>
+                    <span className="text-gray-400">Add Year</span>
                   )}
                   <Edit2 size={14} />
                 </button>
@@ -1042,10 +1038,10 @@ const ExtinguisherDetailView = ({
                       </div>
                     )}
 
-                    {replacement.newManufactureDate && (
+                    {(replacement.newManufactureYear || replacement.newManufactureDate) && (
                       <div>
-                        <span className="text-gray-400">New Manufacture Date:</span>
-                        <span className="text-gray-200 ml-2">{replacement.newManufactureDate}</span>
+                        <span className="text-gray-400">New Manufacture Year:</span>
+                        <span className="text-gray-200 ml-2">{replacement.newManufactureYear || replacement.newManufactureDate}</span>
                       </div>
                     )}
 
