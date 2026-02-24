@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
-import ExcelJS from 'exceljs';
+import writeXlsxFile from 'write-excel-file/browser';
+import readXlsxFile from 'read-excel-file/browser';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Share2, Archive } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch, getDoc, deleteField } from 'firebase/firestore';
@@ -1201,17 +1202,15 @@ const SECTIONS = [
 
       // Ensure stable ordering
       const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section'];
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Extinguishers');
-      worksheet.columns = header.map(key => ({ header: key, key }));
-      rows.forEach(row => worksheet.addRow(row));
 
       const now = new Date();
       const { monthName, year } = getWorkspaceMonthInfo();
       const date = now.toISOString().split('T')[0];
 
-      const buffer = await workbook.csv.writeBuffer();
-      const blob = new Blob([buffer], { type: 'text/csv' });
+      const csvContent = [header, ...rows.map(row => header.map(h => row[h]))]
+        .map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
+        .join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -1627,131 +1626,132 @@ const SECTIONS = [
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    const reader = new FileReader();
-
-    reader.onload = (event) => {
-      const processFile = async () => {
-        try {
-          const data = event.target.result;
-          const workbook = new ExcelJS.Workbook();
-
-          // Determine file type and load appropriately
-          if (file.name.endsWith('.csv')) {
-            await workbook.csv.load(data);
-          } else {
-            await workbook.xlsx.load(data);
-          }
-
-          const firstSheet = workbook.worksheets[0];
-
-          // Convert worksheet to JSON format
-          const jsonData = [];
-          const headers = [];
-          firstSheet.eachRow((row, rowNumber) => {
-            if (rowNumber === 1) {
-              // First row is headers
-              row.eachCell((cell, colNumber) => {
-                headers[colNumber] = cell.value;
-              });
-            } else {
-              // Data rows
-              const rowData = {};
-              row.eachCell((cell, colNumber) => {
-                if (headers[colNumber]) {
-                  rowData[headers[colNumber]] = cell.value;
-                }
-              });
-              if (Object.keys(rowData).length > 0) {
-                jsonData.push(rowData);
-              }
-            }
-          });
-          // Prepare a local index of existing extinguishers by Asset ID (string)
-          // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
-          const existingIndex = new Map(
-            (extinguishers || [])
-              .filter(x => x && x.assetId)
-              .map(x => [String(x.assetId), x])
-          );
-
-          // Normalize and parse incoming rows; allow a Section column to override the dropdown
-          const parsed = jsonData
-            .map((row) => {
-              const assetIdRaw = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || row['assetId'] || row['ID'] || '';
-              const assetId = String(assetIdRaw || '').trim();
-              if (!assetId) return null;
-
-              const vicinity = String(row['Vicinity'] || row['vicinity'] || '').trim();
-              const serial = String(row['Serial'] || row['serial'] || '').trim();
-              const parentLocation = String(row['Parent Location'] || row['Parent\nLocation'] || row['parentLocation'] || '').trim();
-              const sectionFromRow = row['Section'] || row['SECTION'] || row['section'] || row['Building'] || row['Area'] || null;
-              const resolvedSection = sectionFromRow ? String(sectionFromRow).trim() : importSection;
-
-              return {
-                assetId,
-                vicinity,
-                serial,
-                parentLocation,
-                section: resolvedSection,
-              };
-            })
-            .filter(Boolean);
-
-          let added = 0;
-          let updated = 0;
-
-          // Merge: update existing by assetId; add new otherwise. Never delete or overwrite photos/history.
-          for (const item of parsed) {
-            const existing = existingIndex.get(item.assetId);
-            try {
-              if (existing) {
-                const docRef = doc(db, 'extinguishers', existing.id);
-                await setDoc(docRef, {
-                  vicinity: item.vicinity,
-                  serial: item.serial,
-                  parentLocation: item.parentLocation,
-                  section: item.section,
-                  // Intentionally do NOT touch: status, notes, photos, inspectionHistory, lastInspection*
-                  updatedAt: new Date().toISOString()
-                }, { merge: true });
-                updated += 1;
-              } else {
-                await addDoc(collection(db, 'extinguishers'), {
-                  assetId: item.assetId,
-                  vicinity: item.vicinity,
-                  serial: item.serial,
-                  parentLocation: item.parentLocation,
-                  section: item.section,
-                  status: 'pending',
-                  checkedDate: null,
-                  notes: '',
-                  inspectionHistory: [],
-                  userId: user.uid,
-                  workspaceId: currentWorkspaceId,
-                  createdAt: new Date().toISOString()
-                });
-                added += 1;
-              }
-            } catch (error) {
-              console.error('Error merging item', item.assetId, error);
-            }
-          }
-
-          setShowImportModal(false);
-          alert(`Import complete.\n\nAdded: ${added}\nUpdated: ${updated}\n\nNo existing photos, logs, or inspection history were removed.`);
-        } catch (error) {
-          alert('Error reading file. Please make sure it is a valid CSV or Excel file.');
-          console.error(error);
-        }
-      };
-
-      processFile();
-    };
-
-    reader.readAsArrayBuffer(file);
     e.target.value = null;
+
+    try {
+      let jsonData = [];
+
+      if (file.name.endsWith('.csv')) {
+        // Parse CSV natively
+        const text = await file.text();
+        const parseCSVLine = (line) => {
+          const result = [];
+          let current = '';
+          let inQuotes = false;
+          for (let i = 0; i < line.length; i++) {
+            if (line[i] === '"') {
+              if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+              else { inQuotes = !inQuotes; }
+            } else if (line[i] === ',' && !inQuotes) {
+              result.push(current); current = '';
+            } else {
+              current += line[i];
+            }
+          }
+          result.push(current);
+          return result;
+        };
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+        if (lines.length < 2) return;
+        const headers = parseCSVLine(lines[0]);
+        jsonData = lines.slice(1).map(line => {
+          const values = parseCSVLine(line);
+          const rowData = {};
+          headers.forEach((h, i) => { if (h) rowData[h] = values[i] ?? ''; });
+          return Object.keys(rowData).length > 0 ? rowData : null;
+        }).filter(Boolean);
+      } else {
+        // Parse XLSX/XLS using read-excel-file
+        const rows = await readXlsxFile(file);
+        if (rows.length < 2) return;
+        const headers = rows[0];
+        jsonData = rows.slice(1).map(row => {
+          const rowData = {};
+          row.forEach((cell, i) => { if (headers[i]) rowData[headers[i]] = cell; });
+          return Object.keys(rowData).length > 0 ? rowData : null;
+        }).filter(Boolean);
+      }
+
+
+      // Prepare a local index of existing extinguishers by Asset ID (string)
+      // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
+      const existingIndex = new Map(
+        (extinguishers || [])
+          .filter(x => x && x.assetId)
+          .map(x => [String(x.assetId), x])
+      );
+
+      // Normalize and parse incoming rows; allow a Section column to override the dropdown
+      const parsed = jsonData
+        .map((row) => {
+          const assetIdRaw = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || row['assetId'] || row['ID'] || '';
+          const assetId = String(assetIdRaw || '').trim();
+          if (!assetId) return null;
+
+          const vicinity = String(row['Vicinity'] || row['vicinity'] || '').trim();
+          const serial = String(row['Serial'] || row['serial'] || '').trim();
+          const parentLocation = String(row['Parent Location'] || row['Parent\nLocation'] || row['parentLocation'] || '').trim();
+          const sectionFromRow = row['Section'] || row['SECTION'] || row['section'] || row['Building'] || row['Area'] || null;
+          const resolvedSection = sectionFromRow ? String(sectionFromRow).trim() : importSection;
+
+          return {
+            assetId,
+            vicinity,
+            serial,
+            parentLocation,
+            section: resolvedSection,
+          };
+        })
+        .filter(Boolean);
+
+      let added = 0;
+      let updated = 0;
+
+      // Merge: update existing by assetId; add new otherwise. Never delete or overwrite photos/history.
+      for (const item of parsed) {
+        const existing = existingIndex.get(item.assetId);
+        try {
+          if (existing) {
+            const docRef = doc(db, 'extinguishers', existing.id);
+            await setDoc(docRef, {
+              vicinity: item.vicinity,
+              serial: item.serial,
+              parentLocation: item.parentLocation,
+              section: item.section,
+              // Intentionally do NOT touch: status, notes, photos, inspectionHistory, lastInspection*
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+            updated += 1;
+          } else {
+            await addDoc(collection(db, 'extinguishers'), {
+              assetId: item.assetId,
+              vicinity: item.vicinity,
+              serial: item.serial,
+              parentLocation: item.parentLocation,
+              section: item.section,
+              status: 'pending',
+              checkedDate: null,
+              notes: '',
+              inspectionHistory: [],
+              userId: user.uid,
+              workspaceId: currentWorkspaceId,
+              createdAt: new Date().toISOString()
+            });
+            added += 1;
+          }
+        } catch (error) {
+          console.error('Error merging item', item.assetId, error);
+        }
+      }
+
+      setShowImportModal(false);
+      alert(`Import complete.\n\nAdded: ${added}\nUpdated: ${updated}\n\nNo existing photos, logs, or inspection history were removed.`);
+    } catch (error) {
+      alert('Error reading file. Please make sure it is a valid CSV or Excel file.');
+      console.error(error);
+    }
   };
+
 
   const handleAddNew = async () => {
     if (!newItem.assetId.trim()) {
@@ -2254,22 +2254,20 @@ const SECTIONS = [
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
     const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Inspections');
-
-    if (formatted.length > 0) {
-      worksheet.columns = Object.keys(formatted[0]).map(key => ({ header: key, key }));
-      formatted.forEach(row => worksheet.addRow(row));
-    }
-
-    workbook.xlsx.writeBuffer().then(buffer => {
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const workbook_headers = Object.keys(formatted[0] || {});
+    const xlsxData = [workbook_headers, ...formatted.map(row => workbook_headers.map(h => row[h]))];
+    writeXlsxFile(xlsxData).then(blob => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }).catch(error => {
+      console.error('Error exporting data:', error);
+      alert('Failed to export data. Please try again.');
     });
   };
 
@@ -2289,22 +2287,20 @@ const SECTIONS = [
     const { monthName, year } = getWorkspaceMonthInfo();
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Time Tracking');
-
-    if (timeData.length > 0) {
-      worksheet.columns = Object.keys(timeData[0]).map(key => ({ header: key, key }));
-      timeData.forEach(row => worksheet.addRow(row));
-    }
-
-    workbook.xlsx.writeBuffer().then(buffer => {
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const timeHeaders = Object.keys(timeData[0] || {});
+    const xlsxTimeData = [timeHeaders, ...timeData.map(row => timeHeaders.map(h => row[h]))];
+    writeXlsxFile(xlsxTimeData).then(blob => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }).catch(error => {
+      console.error('Error exporting time data:', error);
+      alert('Failed to export time data. Please try again.');
     });
   };
 
