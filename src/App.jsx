@@ -2002,12 +2002,29 @@ const SECTIONS = [
     }
   };
 
-  const deleteItem = async (item) => {
-    if (window.confirm(`Are you sure you want to delete fire extinguisher ${item.assetId}?`)) {
+  const deleteItem = async (item, options = {}) => {
+    if (window.confirm(`Are you sure you want to permanently delete fire extinguisher ${item.assetId}? This cannot be undone.`)) {
+      const reason = window.prompt('Optional: Enter a reason for deleting this extinguisher', '');
+      if (reason === null) return; // user cancelled the prompt
+
       try {
-        await deleteDoc(doc(db, 'extinguishers', item.id));
+        // Archive full record to deletedExtinguishers before removing
+        const { id, ...data } = item;
+        await addDoc(collection(db, 'deletedExtinguishers'), {
+          ...data,
+          originalDocId: id,
+          deletedAt: new Date().toISOString(),
+          deletedBy: user.email || user.uid,
+          deletionReason: reason || ''
+        });
+
+        await deleteDoc(doc(db, 'extinguishers', id));
         setEditItem(null);
         alert('Fire extinguisher deleted successfully!');
+
+        if (options.navigateAfter) {
+          navigate('/app');
+        }
       } catch (error) {
         console.error('Error deleting extinguisher:', error);
         alert('Error deleting fire extinguisher. Please try again.');
@@ -3764,6 +3781,7 @@ const SECTIONS = [
                   onReset={readOnly ? undefined : handleResetToPending}
                   onEdit={readOnly ? undefined : handleEdit}
                   onReplace={readOnly ? undefined : handleOpenReplace}
+                  onDelete={adminMode && !readOnly ? (item) => deleteItem(item, { navigateAfter: true }) : undefined}
                   onSaveNotes={readOnly ? undefined : handleSaveNotes}
                   onUpdateManufactureYear={readOnly ? undefined : handleUpdateManufactureYear}
                   onUpdateExpirationYear={readOnly ? undefined : handleUpdateExpirationYear}
@@ -4016,14 +4034,15 @@ const SECTIONS = [
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full my-8">
-            <div className="flex justify-between items-center mb-4">
+          <div className="bg-white rounded-lg max-w-2xl w-full my-8 flex flex-col max-h-[90vh]">
+            <div className="flex justify-between items-center p-6 pb-4 flex-shrink-0">
               <h3 className="text-xl font-bold">Add New Fire Extinguisher</h3>
               <button onClick={() => setShowAddModal(false)}>
                 <X size={24} />
               </button>
             </div>
-            
+
+            <div className="overflow-y-auto px-6 flex-1 min-h-0">
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -4186,22 +4205,23 @@ const SECTIONS = [
                   )}
                 </div>
               </div>
+            </div>
+            </div>
 
-              <div className="flex gap-4 pt-4">
-                <button
-                  onClick={handleAddNew}
-                  className="flex-1 bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center gap-2"
-                >
-                  <Plus size={20} />
-                  Add Fire Extinguisher
-                </button>
-                <button
-                  onClick={() => setShowAddModal(false)}
-                  className="flex-1 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
-                >
-                  Cancel
-                </button>
-              </div>
+            <div className="flex gap-4 p-6 pt-4 border-t border-gray-200 flex-shrink-0 bg-white rounded-b-lg">
+              <button
+                onClick={handleAddNew}
+                className="flex-1 bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center gap-2"
+              >
+                <Save size={20} />
+                Save Extinguisher
+              </button>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="flex-1 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>

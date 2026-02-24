@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, MapPin, Calendar, CheckCircle, XCircle, Circle, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink, RotateCcw, Edit2, Camera, CalendarClock } from 'lucide-react';
+import { ArrowLeft, MapPin, Calendar, CheckCircle, XCircle, Circle, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink, RotateCcw, Edit2, Camera, CalendarClock, Trash2 } from 'lucide-react';
 
 /**
  * ExtinguisherDetailView - Unified full-page view for fire extinguisher inspection
@@ -19,6 +19,7 @@ const ExtinguisherDetailView = ({
   onReset,
   onEdit,
   onReplace,
+  onDelete,
   onSaveNotes,
   onUpdateManufactureYear,
   onUpdateExpirationYear
@@ -219,6 +220,10 @@ const ExtinguisherDetailView = ({
 
   const handleReplaceClick = () => {
     onReplace?.(extinguisher);
+  };
+
+  const handleDeleteClick = () => {
+    onDelete?.(extinguisher);
   };
 
   const handleResetClick = () => {
@@ -1094,6 +1099,15 @@ const ExtinguisherDetailView = ({
               <RotateCcw size={20} />
               Replace
             </button>
+            {onDelete && (
+              <button
+                onClick={handleDeleteClick}
+                className="flex-1 bg-red-600 text-white p-3 rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 font-semibold transition"
+              >
+                <Trash2 size={20} />
+                Delete
+              </button>
+            )}
           </div>
         </div>
       </div>
