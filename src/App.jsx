@@ -2107,7 +2107,7 @@ const SECTIONS = [
         expirationYear: manufactureYear.trim() ? String(parseInt(manufactureYear.trim()) + 6) : '',
         category: 'standard', // New extinguisher is standard, not spare/replaced
         // Keep user/workspace info
-        userId: user.uid,
+        userId: user?.uid,
         workspaceId: currentWorkspaceId,
         // Reset photos for new extinguisher (old photos are in replacement history if needed)
         photos: [],

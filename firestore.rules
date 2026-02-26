@@ -32,7 +32,8 @@ service cloud.firestore {
     // Extinguishers (always visible when shared)
     match /extinguishers/{id} {
       allow read: if canReadOwner(resource.data.userId);
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Deleted extinguishers archive (immutable)
@@ -46,7 +47,8 @@ service cloud.firestore {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideSectionNotes == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Inspection logs (optional to hide for guests)
@@ -54,7 +56,8 @@ service cloud.firestore {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideInspectionLogs == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Custom assets (optional to hide for guests)
@@ -62,13 +65,15 @@ service cloud.firestore {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideCustomAssets == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
     match /customAssetRows/{id} {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideCustomAssets == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Share control document; owner can set flags and toggle publicRead
