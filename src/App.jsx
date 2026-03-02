@@ -842,8 +842,7 @@ const SECTIONS = [
         );
         const sourceSnap = await getDocs(sourceQuery);
 
-        // Firestore batches are limited to 500 operations
-        const BATCH_SIZE = 500;
+        const BATCH_SIZE = 450;
         for (let i = 0; i < sourceSnap.docs.length; i += BATCH_SIZE) {
           const chunk = sourceSnap.docs.slice(i, i + BATCH_SIZE);
           const batch = writeBatch(db);
@@ -912,7 +911,7 @@ const SECTIONS = [
       return wsDoc.id;
     } catch (error) {
       console.error('Error creating workspace:', error);
-      alert('Error creating workspace. Please try again.');
+      alert('Error creating workspace: ' + error.message);
       return null;
     }
   };
