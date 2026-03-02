@@ -831,47 +831,66 @@ const SECTIONS = [
         archivedAt: null
       };
 
-      const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
+      let wsDoc;
+      try {
+        wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
+      } catch (wsError) {
+        console.error('Failed to create workspace doc:', wsError);
+        alert('Error creating workspace document: ' + wsError.message);
+        return null;
+      }
 
       // If copying from another workspace, copy all extinguishers and reset them to pending
       if (copyFrom) {
-        const sourceQuery = query(
-          collection(db, 'extinguishers'),
-          where('userId', '==', user.uid),
-          where('workspaceId', '==', copyFrom)
-        );
-        const sourceSnap = await getDocs(sourceQuery);
+        try {
+          const sourceQuery = query(
+            collection(db, 'extinguishers'),
+            where('userId', '==', user.uid),
+            where('workspaceId', '==', copyFrom)
+          );
+          const sourceSnap = await getDocs(sourceQuery);
+          console.log(`Copying ${sourceSnap.docs.length} extinguishers from workspace ${copyFrom}`);
 
-        const BATCH_SIZE = 450;
-        for (let i = 0; i < sourceSnap.docs.length; i += BATCH_SIZE) {
-          const chunk = sourceSnap.docs.slice(i, i + BATCH_SIZE);
-          const batch = writeBatch(db);
-          chunk.forEach(docSnapshot => {
-            const data = docSnapshot.data();
-            const newDocRef = doc(collection(db, 'extinguishers'));
-            batch.set(newDocRef, {
-              assetId: data.assetId,
-              serial: data.serial || '',
-              vicinity: data.vicinity || '',
-              parentLocation: data.parentLocation || '',
-              section: data.section,
-              category: data.category || 'standard',
-              status: 'pending',
-              checkedDate: null,
-              notes: '',
-              inspectionHistory: [],
-              checklistData: null,
-              userId: user.uid,
-              workspaceId: wsDoc.id,
-              createdAt: now.toISOString(),
-              photoUrl: data.photoUrl || null,
-              location: data.location || null,
-              photos: data.photos || [],
-              lastInspectionPhotoUrl: null,
-              lastInspectionGps: null
+          const BATCH_SIZE = 450;
+          for (let i = 0; i < sourceSnap.docs.length; i += BATCH_SIZE) {
+            const chunk = sourceSnap.docs.slice(i, i + BATCH_SIZE);
+            const batch = writeBatch(db);
+            chunk.forEach(docSnapshot => {
+              const data = docSnapshot.data();
+              const newDocRef = doc(collection(db, 'extinguishers'));
+              batch.set(newDocRef, {
+                assetId: data.assetId,
+                serial: data.serial || '',
+                vicinity: data.vicinity || '',
+                parentLocation: data.parentLocation || '',
+                section: data.section,
+                category: data.category || 'standard',
+                status: 'pending',
+                checkedDate: null,
+                notes: '',
+                inspectionHistory: [],
+                checklistData: null,
+                userId: user.uid,
+                workspaceId: wsDoc.id,
+                createdAt: now.toISOString(),
+                photoUrl: data.photoUrl || null,
+                location: data.location || null,
+                photos: data.photos || [],
+                lastInspectionPhotoUrl: null,
+                lastInspectionGps: null
+              });
             });
-          });
-          await batch.commit();
+            await batch.commit();
+            console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1} committed (${chunk.length} docs)`);
+          }
+        } catch (copyError) {
+          console.error('Failed to copy extinguishers:', copyError);
+          alert('Workspace created but failed to copy extinguishers: ' + copyError.message);
+          // Still switch to the new workspace even if copy failed
+          setShowCreateWorkspace(false);
+          setPendingNewMonth(null);
+          switchWorkspace(wsDoc.id);
+          return wsDoc.id;
         }
       }
 
@@ -885,14 +904,12 @@ const SECTIONS = [
         const notesBatch = writeBatch(db);
         notesSnap.docs.forEach(noteDoc => {
           const noteData = noteDoc.data();
-          // Only clear notes that are NOT marked to save for next month
           if (!noteData.saveForNextMonth) {
             notesBatch.update(noteDoc.ref, {
               notes: '',
               lastUpdated: now.toISOString()
             });
           } else {
-            // Clear the flag after using it
             notesBatch.update(noteDoc.ref, {
               saveForNextMonth: false,
               lastUpdated: now.toISOString()
@@ -902,7 +919,6 @@ const SECTIONS = [
         await notesBatch.commit();
       } catch (notesError) {
         console.warn('Could not clear section notes for new workspace:', notesError);
-        // Non-critical, continue
       }
 
       setShowCreateWorkspace(false);
