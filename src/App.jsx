@@ -815,7 +815,7 @@ const SECTIONS = [
     setShowWorkspaceSwitcher(false);
   };
 
-  const createWorkspace = async (label, copyFrom = null, monthYearOverride = null) => {
+  const createWorkspace = async (label, monthYearOverride = null) => {
     try {
       const now = new Date();
       const monthYear = monthYearOverride != null
@@ -831,68 +831,7 @@ const SECTIONS = [
         archivedAt: null
       };
 
-      let wsDoc;
-      try {
-        wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
-      } catch (wsError) {
-        console.error('Failed to create workspace doc:', wsError);
-        alert('Error creating workspace document: ' + wsError.message);
-        return null;
-      }
-
-      // If copying from another workspace, copy all extinguishers and reset them to pending
-      if (copyFrom) {
-        try {
-          const sourceQuery = query(
-            collection(db, 'extinguishers'),
-            where('userId', '==', user.uid),
-            where('workspaceId', '==', copyFrom)
-          );
-          const sourceSnap = await getDocs(sourceQuery);
-          console.log(`Copying ${sourceSnap.docs.length} extinguishers from workspace ${copyFrom}`);
-
-          const BATCH_SIZE = 450;
-          for (let i = 0; i < sourceSnap.docs.length; i += BATCH_SIZE) {
-            const chunk = sourceSnap.docs.slice(i, i + BATCH_SIZE);
-            const batch = writeBatch(db);
-            chunk.forEach(docSnapshot => {
-              const data = docSnapshot.data();
-              const newDocRef = doc(collection(db, 'extinguishers'));
-              batch.set(newDocRef, {
-                assetId: data.assetId,
-                serial: data.serial || '',
-                vicinity: data.vicinity || '',
-                parentLocation: data.parentLocation || '',
-                section: data.section,
-                category: data.category || 'standard',
-                status: 'pending',
-                checkedDate: null,
-                notes: '',
-                inspectionHistory: [],
-                checklistData: null,
-                userId: user.uid,
-                workspaceId: wsDoc.id,
-                createdAt: now.toISOString(),
-                photoUrl: data.photoUrl || null,
-                location: data.location || null,
-                photos: data.photos || [],
-                lastInspectionPhotoUrl: null,
-                lastInspectionGps: null
-              });
-            });
-            await batch.commit();
-            console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1} committed (${chunk.length} docs)`);
-          }
-        } catch (copyError) {
-          console.error('Failed to copy extinguishers:', copyError);
-          alert('Workspace created but failed to copy extinguishers: ' + copyError.message);
-          // Still switch to the new workspace even if copy failed
-          setShowCreateWorkspace(false);
-          setPendingNewMonth(null);
-          switchWorkspace(wsDoc.id);
-          return wsDoc.id;
-        }
-      }
+      const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
 
       // Clear section notes for new workspace (unless marked to save)
       try {
@@ -4826,34 +4765,12 @@ const SECTIONS = [
                   <p className="text-sm text-gray-600">
                     How do you want to start this inspection month?
                   </p>
-                  <div className="space-y-3">
-                    {workspaces.length > 0 && (() => {
-                      // Sort workspaces by creation date (newest first) and exclude any workspace for the month being created
-                      const copyOptions = [...workspaces]
-                        .filter(ws => ws.monthYear !== pendingNewMonth.monthYear)
-                        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-                      return copyOptions.length > 0 ? (
-                        <div className="space-y-2">
-                          <p className="text-xs text-gray-500 font-medium">Copy from a previous month:</p>
-                          {copyOptions.map(ws => (
-                            <button
-                              key={ws.id}
-                              onClick={() => createWorkspace(pendingNewMonth.label, ws.id, pendingNewMonth.monthYear)}
-                              className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium text-center"
-                            >
-                              Copy from &quot;{ws.label}&quot;
-                            </button>
-                          ))}
-                        </div>
-                      ) : null;
-                    })()}
-                    <button
-                      onClick={() => createWorkspace(pendingNewMonth.label, null, pendingNewMonth.monthYear)}
-                      className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-center"
-                    >
-                      Start blank
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => createWorkspace(pendingNewMonth.label, pendingNewMonth.monthYear)}
+                    className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-center"
+                  >
+                    Create Workspace
+                  </button>
                   <button
                     onClick={() => setPendingNewMonth(null)}
                     className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition"
