@@ -4828,14 +4828,23 @@ const SECTIONS = [
                   </p>
                   <div className="space-y-3">
                     {workspaces.length > 0 && (() => {
-                      const copyFromWs = getCurrentWorkspace() || [...workspaces].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
-                      return copyFromWs ? (
-                        <button
-                          onClick={() => createWorkspace(pendingNewMonth.label, copyFromWs.id, pendingNewMonth.monthYear)}
-                          className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium text-center"
-                        >
-                          Copy extinguishers from &quot;{copyFromWs.label}&quot;
-                        </button>
+                      // Sort workspaces by creation date (newest first) and exclude any workspace for the month being created
+                      const copyOptions = [...workspaces]
+                        .filter(ws => ws.monthYear !== pendingNewMonth.monthYear)
+                        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+                      return copyOptions.length > 0 ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-gray-500 font-medium">Copy from a previous month:</p>
+                          {copyOptions.map(ws => (
+                            <button
+                              key={ws.id}
+                              onClick={() => createWorkspace(pendingNewMonth.label, ws.id, pendingNewMonth.monthYear)}
+                              className="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium text-center"
+                            >
+                              Copy from &quot;{ws.label}&quot;
+                            </button>
+                          ))}
+                        </div>
                       ) : null;
                     })()}
                     <button
