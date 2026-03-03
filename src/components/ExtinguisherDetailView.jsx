@@ -22,7 +22,9 @@ const ExtinguisherDetailView = ({
   onDelete,
   onSaveNotes,
   onUpdateManufactureYear,
-  onUpdateExpirationYear
+  onUpdateExpirationYear,
+  onUpdateExtinguisherSize,
+  onUpdateExtinguisherType
 }) => {
   const { assetId } = useParams();
   const navigate = useNavigate();
@@ -64,6 +66,14 @@ const ExtinguisherDetailView = ({
   const [editingExpiration, setEditingExpiration] = useState(false);
   const [tempExpirationYear, setTempExpirationYear] = useState('');
 
+  // Size inline edit state
+  const [editingSize, setEditingSize] = useState(false);
+  const [tempSize, setTempSize] = useState('');
+
+  // Type inline edit state
+  const [editingType, setEditingType] = useState(false);
+  const [tempType, setTempType] = useState('');
+
   // Find the extinguisher by assetId
   const extinguisher = extinguishers.find(e => e.assetId === assetId);
 
@@ -95,6 +105,8 @@ const ExtinguisherDetailView = ({
       }
       setTempManufactureYear(extinguisher.manufactureYear || extinguisher.manufacturedDate || '');
       setTempExpirationYear(extinguisher.expirationYear || extinguisher.expirationDate || '');
+      setTempSize(extinguisher.extinguisherSize || '');
+      setTempType(extinguisher.extinguisherType || '');
     }
   }, [extinguisher?.id]);
 
@@ -247,6 +259,21 @@ const ExtinguisherDetailView = ({
     setEditingExpiration(false);
   };
 
+  const handleSaveSize = async () => {
+    if (onUpdateExtinguisherSize) {
+      await onUpdateExtinguisherSize(extinguisher, tempSize);
+    }
+    setEditingSize(false);
+  };
+
+  const handleSaveType = async () => {
+    if (onUpdateExtinguisherType) {
+      const cleanType = (tempType && tempType !== 'Other') ? tempType : '';
+      await onUpdateExtinguisherType(extinguisher, cleanType);
+    }
+    setEditingType(false);
+  };
+
   const captureGps = () => {
     if (!('geolocation' in navigator)) {
       alert('Geolocation not supported on this device/browser.');
@@ -288,6 +315,9 @@ const ExtinguisherDetailView = ({
               <div className="space-y-1 text-gray-300">
                 <p><span className="font-semibold">Serial:</span> {extinguisher.serial || 'N/A'}</p>
                 <p><span className="font-semibold">Manufacture Year:</span> {extinguisher.manufactureYear || extinguisher.manufacturedDate || 'N/A'}</p>
+                {(extinguisher.extinguisherSize || extinguisher.extinguisherType) && (
+                  <p><span className="font-semibold">Size/Type:</span> {[extinguisher.extinguisherSize, extinguisher.extinguisherType].filter(Boolean).join(' / ')}</p>
+                )}
                 <p><span className="font-semibold">Section:</span> {extinguisher.section}</p>
               </div>
             </div>
@@ -414,6 +444,123 @@ const ExtinguisherDetailView = ({
                     <span>{extinguisher.expirationYear || extinguisher.expirationDate}</span>
                   ) : (
                     <span className="text-gray-400">Add Year</span>
+                  )}
+                  <Edit2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Size - Inline Editable */}
+          <div className="pt-4 border-t border-gray-700 mt-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">Size:</span>
+              </div>
+              {editingSize ? (
+                <div className="flex items-center gap-2">
+                  <select
+                    value={tempSize}
+                    onChange={(e) => setTempSize(e.target.value)}
+                    className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
+                    autoFocus
+                  >
+                    <option value="">Not Set</option>
+                    <option value="5lb">5lb</option>
+                    <option value="10lb">10lb</option>
+                    <option value="15lb">15lb</option>
+                    <option value="20lb">20lb</option>
+                  </select>
+                  <button
+                    onClick={handleSaveSize}
+                    className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-xs"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingSize(false);
+                      setTempSize(extinguisher.extinguisherSize || '');
+                    }}
+                    className="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingSize(true)}
+                  className="flex items-center gap-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+                >
+                  {extinguisher.extinguisherSize ? (
+                    <span>{extinguisher.extinguisherSize}</span>
+                  ) : (
+                    <span className="text-gray-400">Add Size</span>
+                  )}
+                  <Edit2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Type - Inline Editable */}
+          <div className="pt-4 border-t border-gray-700 mt-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">Type:</span>
+              </div>
+              {editingType ? (
+                <div className="flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={['ABC', 'CO2', ''].includes(tempType) ? tempType : 'Other'}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setTempType(v === 'Other' ? 'Other' : v);
+                      }}
+                      className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
+                      autoFocus
+                    >
+                      <option value="">Not Set</option>
+                      <option value="ABC">ABC</option>
+                      <option value="CO2">CO2</option>
+                      <option value="Other">Other</option>
+                    </select>
+                    <button
+                      onClick={handleSaveType}
+                      className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-xs"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingType(false);
+                        setTempType(extinguisher.extinguisherType || '');
+                      }}
+                      className="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {tempType !== '' && !['ABC', 'CO2'].includes(tempType) && (
+                    <input
+                      type="text"
+                      value={tempType === 'Other' ? '' : tempType}
+                      onChange={(e) => setTempType(e.target.value || 'Other')}
+                      placeholder="e.g., Purple K, Halotron"
+                      className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white w-full"
+                    />
+                  )}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingType(true)}
+                  className="flex items-center gap-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+                >
+                  {extinguisher.extinguisherType ? (
+                    <span>{extinguisher.extinguisherType}</span>
+                  ) : (
+                    <span className="text-gray-400">Add Type</span>
                   )}
                   <Edit2 size={14} />
                 </button>

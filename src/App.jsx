@@ -70,7 +70,9 @@ const SECTIONS = [
     section: 'Main Hospital',
     category: 'standard',
     manufactureYear: '',
-    expirationYear: ''
+    expirationYear: '',
+    extinguisherSize: '',
+    extinguisherType: ''
   });
   const [newItemPhoto, setNewItemPhoto] = useState(null);
   const [newItemGps, setNewItemGps] = useState(null);
@@ -1155,11 +1157,13 @@ const SECTIONS = [
         'Serial': item.serial || '',
         'Vicinity': item.vicinity || '',
         'Parent Location': item.parentLocation || '',
-        'Section': item.section || ''
+        'Section': item.section || '',
+        'Extinguisher Size': item.extinguisherSize || '',
+        'Extinguisher Type': item.extinguisherType || ''
       }));
 
       // Ensure stable ordering
-      const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section'];
+      const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section', 'Extinguisher Size', 'Extinguisher Type'];
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Extinguishers');
       worksheet.columns = header.map(key => ({ header: key, key }));
@@ -1646,6 +1650,8 @@ const SECTIONS = [
               const parentLocation = String(row['Parent Location'] || row['Parent\nLocation'] || row['parentLocation'] || '').trim();
               const sectionFromRow = row['Section'] || row['SECTION'] || row['section'] || row['Building'] || row['Area'] || null;
               const resolvedSection = sectionFromRow ? String(sectionFromRow).trim() : importSection;
+              const extinguisherSize = String(row['Extinguisher Size'] || row['Size'] || row['extinguisherSize'] || '').trim();
+              const extinguisherType = String(row['Extinguisher Type'] || row['Type'] || row['extinguisherType'] || '').trim();
 
               return {
                 assetId,
@@ -1653,6 +1659,8 @@ const SECTIONS = [
                 serial,
                 parentLocation,
                 section: resolvedSection,
+                extinguisherSize: extinguisherSize || null,
+                extinguisherType: extinguisherType || null,
               };
             })
             .filter(Boolean);
@@ -1666,14 +1674,17 @@ const SECTIONS = [
             try {
               if (existing) {
                 const docRef = doc(db, 'extinguishers', existing.id);
-                await setDoc(docRef, {
+                const mergeData = {
                   vicinity: item.vicinity,
                   serial: item.serial,
                   parentLocation: item.parentLocation,
                   section: item.section,
                   // Intentionally do NOT touch: status, notes, photos, inspectionHistory, lastInspection*
                   updatedAt: new Date().toISOString()
-                }, { merge: true });
+                };
+                if (item.extinguisherSize) mergeData.extinguisherSize = item.extinguisherSize;
+                if (item.extinguisherType) mergeData.extinguisherType = item.extinguisherType;
+                await setDoc(docRef, mergeData, { merge: true });
                 updated += 1;
               } else {
                 await addDoc(collection(db, 'extinguishers'), {
@@ -1682,6 +1693,8 @@ const SECTIONS = [
                   serial: item.serial,
                   parentLocation: item.parentLocation,
                   section: item.section,
+                  extinguisherSize: item.extinguisherSize || null,
+                  extinguisherType: item.extinguisherType || null,
                   status: 'pending',
                   checkedDate: null,
                   notes: '',
@@ -1744,6 +1757,8 @@ const SECTIONS = [
         category: newItem.category || 'standard',
         manufactureYear: newItem.manufactureYear || null,
         expirationYear: newItem.expirationYear || null,
+        extinguisherSize: newItem.extinguisherSize || null,
+        extinguisherType: (newItem.extinguisherType && newItem.extinguisherType !== 'Other') ? newItem.extinguisherType : null,
         status: 'pending',
         checkedDate: null,
         notes: '',
@@ -1765,7 +1780,9 @@ const SECTIONS = [
         section: 'Main Hospital',
         category: 'standard',
         manufactureYear: '',
-        expirationYear: ''
+        expirationYear: '',
+        extinguisherSize: '',
+        extinguisherType: ''
       });
       setNewItemPhoto(null);
       setNewItemGps(null);
@@ -1945,6 +1962,8 @@ const SECTIONS = [
         category: editItem.category || 'standard',
         manufactureYear: editItem.manufactureYear || null,
         expirationYear: editItem.expirationYear || null,
+        extinguisherSize: editItem.extinguisherSize || null,
+        extinguisherType: (editItem.extinguisherType && editItem.extinguisherType !== 'Other') ? editItem.extinguisherType : null,
         location: editItem.location || null
       }, { merge: true });
 
@@ -2131,6 +2150,8 @@ const SECTIONS = [
         'Vicinity': item.vicinity,
         'Parent Location': item.parentLocation,
         'Section': item.section,
+        'Extinguisher Size': item.extinguisherSize || '',
+        'Extinguisher Type': item.extinguisherType || '',
         'Status': item.status.toUpperCase(),
         'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
         'Notes': item.notes || ''
@@ -2608,6 +2629,25 @@ const SECTIONS = [
     } catch (error) {
       console.error('Error updating expiration year:', error);
       alert('Error saving expiration year. Please try again.');
+    }
+  };
+  const handleUpdateExtinguisherSize = async (item, size) => {
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      await setDoc(docRef, { extinguisherSize: size || null }, { merge: true });
+    } catch (error) {
+      console.error('Error updating extinguisher size:', error);
+      alert('Error saving size. Please try again.');
+    }
+  };
+  const handleUpdateExtinguisherType = async (item, type) => {
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      const cleanType = (type && type !== 'Other') ? type : null;
+      await setDoc(docRef, { extinguisherType: cleanType }, { merge: true });
+    } catch (error) {
+      console.error('Error updating extinguisher type:', error);
+      alert('Error saving type. Please try again.');
     }
   };
 
@@ -3744,6 +3784,8 @@ const SECTIONS = [
                   onSaveNotes={readOnly ? undefined : handleSaveNotes}
                   onUpdateManufactureYear={readOnly ? undefined : handleUpdateManufactureYear}
                   onUpdateExpirationYear={readOnly ? undefined : handleUpdateExpirationYear}
+                  onUpdateExtinguisherSize={readOnly ? undefined : handleUpdateExtinguisherSize}
+                  onUpdateExtinguisherType={readOnly ? undefined : handleUpdateExtinguisherType}
                 />
               }
             />
@@ -4117,6 +4159,47 @@ const SECTIONS = [
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                <select
+                  value={newItem.extinguisherSize}
+                  onChange={(e) => setNewItem({...newItem, extinguisherSize: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Size</option>
+                  <option value="5lb">5lb</option>
+                  <option value="10lb">10lb</option>
+                  <option value="15lb">15lb</option>
+                  <option value="20lb">20lb</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={['ABC', 'CO2', ''].includes(newItem.extinguisherType) ? newItem.extinguisherType : 'Other'}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setNewItem({...newItem, extinguisherType: v === 'Other' ? 'Other' : v});
+                  }}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Type</option>
+                  <option value="ABC">ABC</option>
+                  <option value="CO2">CO2</option>
+                  <option value="Other">Other</option>
+                </select>
+                {newItem.extinguisherType !== '' && !['ABC', 'CO2'].includes(newItem.extinguisherType) && (
+                  <input
+                    type="text"
+                    value={newItem.extinguisherType === 'Other' ? '' : newItem.extinguisherType}
+                    onChange={(e) => setNewItem({...newItem, extinguisherType: e.target.value || 'Other'})}
+                    placeholder="Enter custom type (e.g., Purple K, Halotron)"
+                    className="w-full p-2 border border-gray-300 rounded-lg mt-2"
+                  />
+                )}
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Photo (optional)</label>
                 <input type="file" accept="image/*" capture="environment" onChange={(e)=> setNewItemPhoto(e.target.files?.[0] || null)} />
               </div>
@@ -4338,6 +4421,47 @@ const SECTIONS = [
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Auto-calculated as manufacture year + 6</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                <select
+                  value={editItem.extinguisherSize || ''}
+                  onChange={(e) => setEditItem({...editItem, extinguisherSize: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Size</option>
+                  <option value="5lb">5lb</option>
+                  <option value="10lb">10lb</option>
+                  <option value="15lb">15lb</option>
+                  <option value="20lb">20lb</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={['ABC', 'CO2', ''].includes(editItem.extinguisherType || '') ? (editItem.extinguisherType || '') : 'Other'}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEditItem({...editItem, extinguisherType: v === 'Other' ? 'Other' : v});
+                  }}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Type</option>
+                  <option value="ABC">ABC</option>
+                  <option value="CO2">CO2</option>
+                  <option value="Other">Other</option>
+                </select>
+                {(editItem.extinguisherType || '') !== '' && !['ABC', 'CO2'].includes(editItem.extinguisherType || '') && (
+                  <input
+                    type="text"
+                    value={(editItem.extinguisherType || '') === 'Other' ? '' : (editItem.extinguisherType || '')}
+                    onChange={(e) => setEditItem({...editItem, extinguisherType: e.target.value || 'Other'})}
+                    placeholder="Enter custom type (e.g., Purple K, Halotron)"
+                    className="w-full p-2 border border-gray-300 rounded-lg mt-2"
+                  />
+                )}
               </div>
 
               {/* GPS for edit */}

@@ -150,6 +150,9 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
                 <div onClick={() => navigate(`/app/extinguisher/${item.assetId}`, { state: { from: 'section', returnPath: `/app/section/${encodeURIComponent(section)}` } })} className="cursor-pointer">
                   <div className="font-bold text-lg pr-10">{item.assetId}</div>
                   <div className="text-sm text-gray-600">{item.vicinity} • {item.parentLocation}</div>
+                  {(item.extinguisherSize || item.extinguisherType) && (
+                    <div className="text-xs text-gray-400 mt-0.5">{[item.extinguisherSize, item.extinguisherType].filter(Boolean).join(' ')}</div>
+                  )}
                   <div className="text-xs text-gray-500 mt-1">Status: {item.status}</div>
                 </div>
                 <button
