@@ -186,6 +186,8 @@ Required variables:
 - `VITE_FIREBASE_MEASUREMENT_ID` (different per app, optional)
 - `VITE_ENV` (optional, defaults to 'development')
 
+**Netlify (and other hosts):** Set `VITE_FIREBASE_API_KEY` and other `VITE_*` variables in the host's Environment Variables UI (e.g. Netlify → Site settings → Environment variables). The API key must not be committed to the repo.
+
 ## Security Notes
 
 - ⚠️ Never commit `.env` files to git (already in `.gitignore`)

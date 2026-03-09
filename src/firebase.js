@@ -10,10 +10,9 @@ import { getAnalytics } from 'firebase/analytics';
 const env = import.meta?.env || {};
 const currentEnv = env.VITE_ENV || 'development';
 
-// Default production config (fallback)
+// Default production config (fallback) - apiKey must come from env only
 const defaultProjectId = 'fire-extinguisher-tracke-9e98f';
 const defaultConfig = {
-  apiKey: "AIzaSyB1e9aheHRCYCQF8iNH9C3D1tZlSkYXAlY",
   authDomain: "fire-extinguisher-tracke-9e98f.firebaseapp.com",
   projectId: defaultProjectId,
   storageBucket: `${defaultProjectId}.appspot.com`,
@@ -22,10 +21,17 @@ const defaultConfig = {
   measurementId: "G-0M2WJ03MF0"
 };
 
+const apiKey = env.VITE_FIREBASE_API_KEY;
+if (!apiKey) {
+  throw new Error(
+    'Missing VITE_FIREBASE_API_KEY. Set it in .env or in your host\'s environment (e.g. Netlify Environment Variables).'
+  );
+}
+
 // Build config from environment variables or use defaults
 const envProjectId = env.VITE_FIREBASE_PROJECT_ID || defaultConfig.projectId;
 const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || defaultConfig.apiKey,
+  apiKey,
   authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || defaultConfig.authDomain,
   projectId: envProjectId,
   storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || `${envProjectId}.appspot.com`,
