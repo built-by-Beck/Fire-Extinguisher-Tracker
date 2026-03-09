@@ -36,8 +36,8 @@ const firebaseConfig = {
 
 // Log environment in development (helpful for debugging)
 if (currentEnv === 'development' && import.meta.env.DEV) {
-  console.log(`🔥 Firebase initialized for: ${currentEnv}`);
-  console.log(`📦 Project ID: ${firebaseConfig.projectId}`);
+  console.log(`Firebase initialized for: ${currentEnv}`);
+  console.log(`Project ID: ${firebaseConfig.projectId}`);
 }
 
 // Initialize Firebase
@@ -66,58 +66,9 @@ let analyticsInstance = null;
 try {
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     analyticsInstance = getAnalytics(app);
-    // #region agent log
-    if (typeof fetch === 'function') {
-      fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'firebase.js:initAnalytics',
-          message: 'analytics initialized',
-          data: { projectId: firebaseConfig.projectId, env: currentEnv },
-          timestamp: Date.now(),
-          runId: 'initial',
-          hypothesisId: 'H1'
-        })
-      }).catch(() => {});
-    }
-    // #endregion
-  } else {
-    // #region agent log
-    if (typeof fetch === 'function') {
-      fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          location: 'firebase.js:initAnalytics',
-          message: 'analytics skipped (non-browser environment)',
-          data: { projectId: firebaseConfig.projectId, env: currentEnv },
-          timestamp: Date.now(),
-          runId: 'initial',
-          hypothesisId: 'H1'
-        })
-      }).catch(() => {});
-    }
-    // #endregion
   }
 } catch (err) {
   console.warn('Analytics initialization failed:', err);
-  // #region agent log
-  if (typeof fetch === 'function') {
-    fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        location: 'firebase.js:initAnalyticsError',
-        message: 'analytics init failed',
-        data: { projectId: firebaseConfig.projectId, env: currentEnv, errorMessage: err?.message || String(err) },
-        timestamp: Date.now(),
-        runId: 'initial',
-        hypothesisId: 'H1'
-      })
-    }).catch(() => {});
-  }
-  // #endregion
 }
 export const analytics = analyticsInstance;
 

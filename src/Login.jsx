@@ -1,137 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { auth, db } from './firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase';
+import { useNavigate } from 'react-router-dom';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
 function Login() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [ownerCode, setOwnerCode] = useState('');
-  const [resolvedOwnerId, setResolvedOwnerId] = useState(null);
 
-  // Resolve short code to owner UID
-  useEffect(() => {
-    const qs = new URLSearchParams(location.search);
-    const code = qs.get('code') || '';
-    const owner = qs.get('owner') || '';
-    // #region agent log
-    if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:resolveCode',message:'URL params',data:{code,owner,search:location.search},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{}); }
-    // #endregion
-    if (code) {
-      // Look up short code
-      (async () => {
-        try {
-          const codeKey = code.toUpperCase();
-          const codeRef = doc(db, 'shareCodes', codeKey);
-          const codeSnap = await getDoc(codeRef);
-          // #region agent log
-          if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:shareCodesLookup',message:'getDoc result',data:{codeKey,exists:codeSnap.exists(),ownerUID:codeSnap.exists()?codeSnap.data().ownerUID:null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{}); }
-          // #endregion
-          if (codeSnap.exists()) {
-            const data = codeSnap.data();
-            const ownerUID = data.ownerUID;
-            const expiresAt = data.expiresAt;
-            if (expiresAt && (expiresAt.toDate ? expiresAt.toDate() : new Date(expiresAt)) <= new Date()) {
-              setError('This link has expired.');
-              setResolvedOwnerId(null);
-            } else if (ownerUID) {
-              setResolvedOwnerId(ownerUID);
-              setOwnerCode(code.toUpperCase());
-            } else {
-              setError('Invalid share code. Please check and try again.');
-            }
-          } else {
-            setError('Invalid share code. Please check and try again.');
-          }
-        } catch (err) {
-          console.error('Error looking up share code:', err);
-          setError('Failed to look up share code.');
-          // #region agent log
-          if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:shareCodesError',message:'lookup failed',data:{err:err?.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{}); }
-          // #endregion
-        }
-      })();
-    } else if (owner) {
-      // Legacy support for owner UID
-      setResolvedOwnerId(owner);
-      setOwnerCode(owner);
-    }
-  }, [location.search]);
-
-  // Redirect to app if already authenticated
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
-        const qs = new URLSearchParams(location.search);
-        const code = qs.get('code');
-        const owner = qs.get('owner');
-        // #region agent log
-        if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:authRedirect',message:'redirect branch',data:{hasUser:!!user,code,owner,resolvedOwnerId,branch:code&&resolvedOwnerId?'code+owner':owner?'owner':'else'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{}); }
-        // #endregion
-        if (code && resolvedOwnerId) {
-          navigate(`/app?owner=${encodeURIComponent(resolvedOwnerId)}`);
-        } else if (owner) {
-          navigate(`/app?owner=${encodeURIComponent(owner)}`);
-        } else {
-          navigate('/app');
-        }
+        navigate('/app');
       }
     });
     return () => unsubscribe();
-  }, [navigate, location.search, resolvedOwnerId]);
+  }, [navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     try {
-      // #region agent log
-      if (typeof fetch === 'function') {
-        fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'Login.jsx:handleSubmit',
-            message: 'login submit',
-            data: { isSignUp, hasEmail: !!email, hasPassword: !!password },
-            timestamp: Date.now(),
-            runId: 'initial',
-            hypothesisId: 'H2'
-          })
-        }).catch(() => {});
-      }
-      // #endregion
-      if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, email, password);
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
-      }
+      await signInWithEmailAndPassword(auth, email, password);
     } catch (error) {
       setError(error.message);
-      // #region agent log
-      if (typeof fetch === 'function') {
-        fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            location: 'Login.jsx:handleSubmit',
-            message: 'login error',
-            data: { code: error?.code, message: error?.message },
-            timestamp: Date.now(),
-            runId: 'initial',
-            hypothesisId: 'H2'
-          })
-        }).catch(() => {});
-      }
-      // #endregion
     } finally {
       setLoading(false);
     }
@@ -148,146 +44,33 @@ function Login() {
             <h1 className="text-2xl font-bold text-gray-900">Fire Safety Management</h1>
             <h2 className="text-lg text-gray-600">Fire Extinguisher Tracker</h2>
           </div>
-
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Email Address
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter your email"
-                  required
-                />
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="Enter your email" required />
               </div>
             </div>
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Password
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  placeholder="Enter your password"
-                  required
-                  minLength={6}
-                />
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="Enter your password" required minLength={6} />
               </div>
             </div>
-
             {error && (
               <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
                 <AlertCircle size={20} className="text-red-500 flex-shrink-0" />
                 <span className="text-sm text-red-700">{error}</span>
               </div>
             )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-            >
-              {loading ? 'Please wait...' : (isSignUp ? 'Create Account' : 'Sign In')}
+            <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium">
+              {loading ? 'Please wait...' : 'Sign In'}
             </button>
           </form>
-
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => setIsSignUp(!isSignUp)}
-              className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-            >
-              {isSignUp ? 'Already have an account? Sign in' : 'Need an account? Sign up'}
-            </button>
-          </div>
-
-          {/* Guest Access */}
-          <div className="mt-8">
-            <div className="border-t pt-6">
-              <h3 className="text-sm font-semibold text-gray-800 mb-2">Guest Access (Read-Only)</h3>
-              {ownerCode && (
-                <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
-                  Share code detected! Click "Continue as Guest" below to view the shared data.
-                </div>
-              )}
-              <p className="text-xs text-gray-600 mb-3">Enter the 6-character share code provided by the owner to view their data without a password.</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Share code (e.g., ABC123)"
-                  value={ownerCode}
-                  onChange={(e) => {
-                    const code = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-                    setOwnerCode(code);
-                    setResolvedOwnerId(null);
-                    setError('');
-                  }}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono text-center text-lg font-bold"
-                  maxLength={6}
-                />
-                <button
-                  onClick={async () => {
-                    try {
-                      setError('');
-                      setLoading(true);
-                      
-                      // Look up short code if provided
-                      let ownerUID = resolvedOwnerId;
-                      if (!ownerUID && ownerCode) {
-                        if (ownerCode.length === 6) {
-                          const codeRef = doc(db, 'shareCodes', ownerCode.toUpperCase());
-                          const codeSnap = await getDoc(codeRef);
-                          if (codeSnap.exists()) {
-                            const data = codeSnap.data();
-                            const exp = data.expiresAt;
-                            if (exp && (exp.toDate ? exp.toDate() : new Date(exp)) <= new Date()) {
-                              throw new Error('This link has expired.');
-                            }
-                            ownerUID = data.ownerUID;
-                          } else {
-                            throw new Error('Invalid share code. Please check and try again.');
-                          }
-                        } else {
-                          // Legacy: might be a full UID
-                          ownerUID = ownerCode;
-                        }
-                      }
-                      
-                      if (!ownerUID) {
-                        throw new Error('Please enter a share code.');
-                      }
-                      // #region agent log
-                      if (typeof fetch === 'function') { fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'Login.jsx:continueAsGuest',message:'navigate target',data:{ownerUID,navigateTo:`/app?owner=${encodeURIComponent(ownerUID)}`},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{}); }
-                      // #endregion
-                      await signInAnonymously(auth);
-                      navigate(`/app?owner=${encodeURIComponent(ownerUID)}`);
-                    } catch (err) {
-                      setError(err?.message || 'Guest sign-in failed');
-                    } finally {
-                      setLoading(false);
-                    }
-                  }}
-                  className="px-3 py-2 rounded bg-gray-800 text-white text-sm hover:bg-black disabled:opacity-50"
-                  disabled={loading || !ownerCode}
-                >
-                  Continue as Guest
-                </button>
-              </div>
-              <p className="mt-2 text-[11px] text-gray-500">No password required. Access is read-only and may be time-limited.</p>
-            </div>
-          </div>
-
           <div className="mt-8 text-center text-xs text-gray-500">
-            <p>Secure access for authorized hospital staff</p>
+            <p>Private access only</p>
           </div>
         </div>
       </div>
