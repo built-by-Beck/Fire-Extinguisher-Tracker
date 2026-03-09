@@ -23,6 +23,13 @@ service cloud.firestore {
       return isOwner(ownerId) || (signedIn() && shareEnabled(ownerId));
     }
 
+    // Buildings (user-created sections)
+    match /buildings/{id} {
+      allow read: if canReadOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
+    }
+
     // Workspaces
     match /workspaces/{id} {
       allow read: if canReadOwner(resource.data.userId);
@@ -30,6 +37,7 @@ service cloud.firestore {
     }
 
     // Extinguishers (always visible when shared)
+    // create: use request.resource.data (document does not exist yet); update/delete: use resource.data
     match /extinguishers/{id} {
       allow read: if canReadOwner(resource.data.userId);
       allow create: if isOwner(request.resource.data.userId);
