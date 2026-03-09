@@ -7,6 +7,7 @@ import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where
 import { auth, db, storage, workspacesRef } from './firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { deleteObject } from 'firebase/storage';
+import Login from './Login';
 import CameraScanner from './components/BarcodeScanner.jsx';
 import SectionGrid from './components/SectionGrid';
 import SectionDetail from './components/SectionDetail';
@@ -3055,19 +3056,9 @@ function App() {
     );
   }
 
-  // Redirect unauthenticated users to the public SaaS site
+  // Show login if not authenticated
   if (!user) {
-    window.location.href = 'https://extinguishertracker.com';
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="text-center">
-          <p className="text-gray-600 mb-2">Redirecting to extinguishertracker.com...</p>
-          <a href="https://extinguishertracker.com" className="text-blue-600 hover:text-blue-700 text-sm">
-            Click here if not redirected
-          </a>
-        </div>
-      </div>
-    );
+    return <Login />;
   }
 
   return (

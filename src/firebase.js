@@ -36,8 +36,8 @@ const firebaseConfig = {
 
 // Log environment in development (helpful for debugging)
 if (currentEnv === 'development' && import.meta.env.DEV) {
-  console.log(`Firebase initialized for: ${currentEnv}`);
-  console.log(`Project ID: ${firebaseConfig.projectId}`);
+  console.log(`🔥 Firebase initialized for: ${currentEnv}`);
+  console.log(`📦 Project ID: ${firebaseConfig.projectId}`);
 }
 
 // Initialize Firebase
@@ -59,18 +59,7 @@ try {
   console.warn('Failed to enable Firestore persistence:', e);
 }
 export const auth = getAuth(app);
-
-// Guarded Analytics initialization (some environments, especially on Apple devices,
-// can throw when initializing analytics; this prevents a full app crash)
-let analyticsInstance = null;
-try {
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-    analyticsInstance = getAnalytics(app);
-  }
-} catch (err) {
-  console.warn('Analytics initialization failed:', err);
-}
-export const analytics = analyticsInstance;
+export const analytics = getAnalytics(app);
 
 // Collection references
 export const workspacesRef = collection(db, 'workspaces');
