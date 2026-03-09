@@ -4,41 +4,28 @@ import { getStorage } from 'firebase/storage';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics } from 'firebase/analytics';
 
-// Environment-based Firebase configuration
-// Supports: development, staging, production
-// Set via .env files or VITE_ENV environment variable
-const env = import.meta?.env || {};
-const currentEnv = env.VITE_ENV || 'development';
-
-// Default production config (fallback)
-// Note: Firebase web API keys are public by design — security is enforced
-// by Firestore rules and Firebase Auth, not by hiding the key.
-const defaultProjectId = 'fire-extinguisher-tracke-9e98f';
-const defaultConfig = {
-  apiKey: "AIzaSyB1e9aheHRCYCQF8iNH9C3D1tZlSkYXAlY",
-  authDomain: "fire-extinguisher-tracke-9e98f.firebaseapp.com",
-  projectId: defaultProjectId,
-  storageBucket: `${defaultProjectId}.appspot.com`,
-  messagingSenderId: "1068945798281",
-  appId: "1:1068945798281:web:575102ab9851df0d870258",
-  measurementId: "G-0M2WJ03MF0"
-};
-
-// Build config from environment variables or use defaults
-const envProjectId = env.VITE_FIREBASE_PROJECT_ID || defaultConfig.projectId;
+// Firebase configuration — all values come from Vite env vars.
+// IMPORTANT: Use import.meta.env.VITE_* directly (not through an alias)
+// so Vite statically replaces them at build time.
 const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || defaultConfig.apiKey,
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || defaultConfig.authDomain,
-  projectId: envProjectId,
-  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || `${envProjectId}.appspot.com`,
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || defaultConfig.messagingSenderId,
-  appId: env.VITE_FIREBASE_APP_ID || defaultConfig.appId,
-  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || defaultConfig.measurementId
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
+
+if (!firebaseConfig.apiKey) {
+  throw new Error(
+    'Missing VITE_FIREBASE_API_KEY. Set it in .env locally or in Netlify Environment Variables for production.'
+  );
+}
 
 // Log environment in development (helpful for debugging)
-if (currentEnv === 'development' && import.meta.env.DEV) {
-  console.log(`🔥 Firebase initialized for: ${currentEnv}`);
+if (import.meta.env.DEV) {
+  console.log(`🔥 Firebase initialized for: ${import.meta.env.VITE_ENV || 'development'}`);
   console.log(`📦 Project ID: ${firebaseConfig.projectId}`);
 }
 
