@@ -93,6 +93,22 @@ function Login() {
     setLoading(true);
 
     try {
+      // #region agent log
+      if (typeof fetch === 'function') {
+        fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: 'Login.jsx:handleSubmit',
+            message: 'login submit',
+            data: { isSignUp, hasEmail: !!email, hasPassword: !!password },
+            timestamp: Date.now(),
+            runId: 'initial',
+            hypothesisId: 'H2'
+          })
+        }).catch(() => {});
+      }
+      // #endregion
       if (isSignUp) {
         await createUserWithEmailAndPassword(auth, email, password);
       } else {
@@ -100,6 +116,22 @@ function Login() {
       }
     } catch (error) {
       setError(error.message);
+      // #region agent log
+      if (typeof fetch === 'function') {
+        fetch('http://127.0.0.1:7244/ingest/c84b91a5-f1cf-4449-9aa5-3f7c4439b442', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            location: 'Login.jsx:handleSubmit',
+            message: 'login error',
+            data: { code: error?.code, message: error?.message },
+            timestamp: Date.now(),
+            runId: 'initial',
+            hypothesisId: 'H2'
+          })
+        }).catch(() => {});
+      }
+      // #endregion
     } finally {
       setLoading(false);
     }
