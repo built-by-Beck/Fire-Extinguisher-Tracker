@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
 import writeXlsxFile from 'write-excel-file/browser';
 import readXlsxFile from 'read-excel-file/browser';
@@ -17,19 +17,7 @@ import Calculator from './components/Calculator.jsx';
 import PrintableExtinguisherList from './components/PrintableExtinguisherList.jsx';
 import CustomAssetChecker from './components/CustomAssetChecker.jsx';
 
-const SECTIONS = [
-  'Main Hospital',
-  'Building A',
-  'Building B', 
-  'Building C',
-  'Building D',
-  'WMC',
-  'Employee Parking',
-  'Visitor Parking',
-  'FED'
-];
-
-  function App() {
+function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(null);
@@ -62,6 +50,10 @@ const SECTIONS = [
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSection, setImportSection] = useState('Main Hospital');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [addModalPreselectedSection, setAddModalPreselectedSection] = useState(null);
+  const [showAddBuildingModal, setShowAddBuildingModal] = useState(false);
+  const [newBuildingName, setNewBuildingName] = useState('');
+  const [buildings, setBuildings] = useState([]);
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [newItem, setNewItem] = useState({
     assetId: '',
@@ -71,7 +63,9 @@ const SECTIONS = [
     section: 'Main Hospital',
     category: 'standard',
     manufactureYear: '',
-    expirationYear: ''
+    expirationYear: '',
+    extinguisherSize: '',
+    extinguisherType: ''
   });
   const [newItemPhoto, setNewItemPhoto] = useState(null);
   const [newItemGps, setNewItemGps] = useState(null);
@@ -669,6 +663,63 @@ const SECTIONS = [
     return () => unsubscribeSectionNotes();
   }, [dataOwnerId, readOnly, viewerSharePrefs.hideSectionNotes]);
 
+  // Load buildings (user-created sections)
+  useEffect(() => {
+    if (!dataOwnerId) {
+      setBuildings([]);
+      return;
+    }
+    const buildingsQuery = query(
+      collection(db, 'buildings'),
+      where('userId', '==', dataOwnerId)
+    );
+    const unsubscribeBuildings = onSnapshot(buildingsQuery, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const sorted = list.sort((a, b) => {
+        const orderA = a.sortOrder ?? 999;
+        const orderB = b.sortOrder ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
+        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (dateA !== dateB) return dateA - dateB;
+        return (a.name || '').localeCompare(b.name || '');
+      });
+      setBuildings(sorted);
+    }, (error) => {
+      console.error('Firebase buildings listener error:', error.code, error.message);
+    });
+    return () => unsubscribeBuildings();
+  }, [dataOwnerId]);
+
+  // One-time migration: create building docs from existing extinguisher sections
+  const buildingsMigrationDoneRef = useRef(false);
+  useEffect(() => {
+    if (!dataOwnerId || !user || user.uid !== dataOwnerId || readOnly) return;
+    if (buildings.length > 0) return;
+    if (extinguishers.length === 0) return;
+    const key = `buildingsMigrated_${dataOwnerId}`;
+    if (localStorage.getItem(key)) return;
+    if (buildingsMigrationDoneRef.current) return;
+    buildingsMigrationDoneRef.current = true;
+    const uniqueSections = [...new Set(extinguishers.map(e => e.section).filter(Boolean))];
+    if (uniqueSections.length === 0) return;
+    (async () => {
+      try {
+        for (const name of uniqueSections) {
+          await addDoc(collection(db, 'buildings'), {
+            userId: dataOwnerId,
+            name,
+            createdAt: new Date().toISOString()
+          });
+        }
+        localStorage.setItem(key, '1');
+      } catch (err) {
+        console.error('Buildings migration error:', err);
+        buildingsMigrationDoneRef.current = false;
+      }
+    })();
+  }, [dataOwnerId, user, readOnly, buildings.length, extinguishers.length]);
+
   useEffect(() => {
     if (dataOwnerId && currentWorkspaceId && Object.keys(sectionTimes).length > 0) {
       localStorage.setItem(`sectionTimes_${dataOwnerId}_${currentWorkspaceId}`, JSON.stringify(sectionTimes));
@@ -816,7 +867,7 @@ const SECTIONS = [
     setShowWorkspaceSwitcher(false);
   };
 
-  const createWorkspace = async (label, copyFrom = null, monthYearOverride = null) => {
+  const createWorkspace = async (label, monthYearOverride = null) => {
     try {
       const now = new Date();
       const monthYear = monthYearOverride != null
@@ -834,44 +885,6 @@ const SECTIONS = [
 
       const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
 
-      // If copying from another workspace, copy all extinguishers and reset them to pending
-      if (copyFrom) {
-        const sourceQuery = query(
-          collection(db, 'extinguishers'),
-          where('userId', '==', user.uid),
-          where('workspaceId', '==', copyFrom)
-        );
-        const sourceSnap = await getDocs(sourceQuery);
-
-        const batch = writeBatch(db);
-        sourceSnap.docs.forEach(docSnapshot => {
-          const data = docSnapshot.data();
-          const newDocRef = doc(collection(db, 'extinguishers'));
-          batch.set(newDocRef, {
-            assetId: data.assetId,
-            serial: data.serial || '',
-            vicinity: data.vicinity || '',
-            parentLocation: data.parentLocation || '',
-            section: data.section,
-            category: data.category || 'standard',
-            status: 'pending',
-            checkedDate: null,
-            notes: '',
-            inspectionHistory: [], // New month: no inspection history
-            checklistData: null, // New month: no checklist / inspection data
-            userId: user.uid,
-            workspaceId: wsDoc.id,
-            createdAt: now.toISOString(),
-            photoUrl: data.photoUrl || null,
-            location: data.location || null,
-            photos: data.photos || [],
-            lastInspectionPhotoUrl: null,
-            lastInspectionGps: null
-          });
-        });
-        await batch.commit();
-      }
-
       // Clear section notes for new workspace (unless marked to save)
       try {
         const notesQuery = query(
@@ -882,14 +895,12 @@ const SECTIONS = [
         const notesBatch = writeBatch(db);
         notesSnap.docs.forEach(noteDoc => {
           const noteData = noteDoc.data();
-          // Only clear notes that are NOT marked to save for next month
           if (!noteData.saveForNextMonth) {
             notesBatch.update(noteDoc.ref, {
               notes: '',
               lastUpdated: now.toISOString()
             });
           } else {
-            // Clear the flag after using it
             notesBatch.update(noteDoc.ref, {
               saveForNextMonth: false,
               lastUpdated: now.toISOString()
@@ -899,7 +910,6 @@ const SECTIONS = [
         await notesBatch.commit();
       } catch (notesError) {
         console.warn('Could not clear section notes for new workspace:', notesError);
-        // Non-critical, continue
       }
 
       setShowCreateWorkspace(false);
@@ -908,7 +918,7 @@ const SECTIONS = [
       return wsDoc.id;
     } catch (error) {
       console.error('Error creating workspace:', error);
-      alert('Error creating workspace. Please try again.');
+      alert('Error creating workspace: ' + error.message);
       return null;
     }
   };
@@ -1197,7 +1207,9 @@ const SECTIONS = [
         'Serial': item.serial || '',
         'Vicinity': item.vicinity || '',
         'Parent Location': item.parentLocation || '',
-        'Section': item.section || ''
+        'Section': item.section || '',
+        'Extinguisher Size': item.extinguisherSize || '',
+        'Extinguisher Type': item.extinguisherType || ''
       }));
 
       // Ensure stable ordering
@@ -1776,15 +1788,18 @@ const SECTIONS = [
         }
       }
 
+      const sectionToUse = addModalPreselectedSection || newItem.section;
       const item = {
         assetId: newItem.assetId.trim(),
         vicinity: newItem.vicinity.trim(),
         serial: newItem.serial.trim(),
         parentLocation: newItem.parentLocation.trim(),
-        section: newItem.section,
+        section: sectionToUse,
         category: newItem.category || 'standard',
         manufactureYear: newItem.manufactureYear || null,
         expirationYear: newItem.expirationYear || null,
+        extinguisherSize: newItem.extinguisherSize || null,
+        extinguisherType: (newItem.extinguisherType && newItem.extinguisherType !== 'Other') ? newItem.extinguisherType : null,
         status: 'pending',
         checkedDate: null,
         notes: '',
@@ -1803,18 +1818,55 @@ const SECTIONS = [
         serial: '',
         vicinity: '',
         parentLocation: '',
-        section: 'Main Hospital',
+        section: sectionNames[0] || '',
         category: 'standard',
         manufactureYear: '',
-        expirationYear: ''
+        expirationYear: '',
+        extinguisherSize: '',
+        extinguisherType: ''
       });
       setNewItemPhoto(null);
       setNewItemGps(null);
+      setAddModalPreselectedSection(null);
       alert('New fire extinguisher added successfully!');
     } catch (error) {
       console.error('Error adding extinguisher:', error);
       alert('Error adding fire extinguisher. Please try again.');
     }
+  };
+
+  const handleAddBuilding = async () => {
+    const name = (newBuildingName || '').trim();
+    if (!name) {
+      alert('Building name is required');
+      return;
+    }
+    if (!user?.uid) return;
+    const buildingNames = buildings.map(b => (typeof b === 'string' ? b : b.name));
+    if (buildingNames.includes(name)) {
+      alert('A building with that name already exists');
+      return;
+    }
+    try {
+      await addDoc(collection(db, 'buildings'), {
+        userId: user.uid,
+        name,
+        createdAt: new Date().toISOString()
+      });
+      setShowAddBuildingModal(false);
+      setNewBuildingName('');
+      alert('Building added successfully!');
+    } catch (error) {
+      console.error('Error adding building:', error);
+      alert('Error adding building. Please try again.');
+    }
+  };
+
+  const openAddExtinguisherModal = (preselectedSection = null) => {
+    setAddModalPreselectedSection(preselectedSection);
+    const defaultSection = preselectedSection || sectionNames[0] || '';
+    setNewItem(prev => ({ ...prev, section: defaultSection }));
+    setShowAddModal(true);
   };
 
   const handleInspection = async (item, status, notes = '', inspectionData = null) => {
@@ -1986,6 +2038,8 @@ const SECTIONS = [
         category: editItem.category || 'standard',
         manufactureYear: editItem.manufactureYear || null,
         expirationYear: editItem.expirationYear || null,
+        extinguisherSize: editItem.extinguisherSize || null,
+        extinguisherType: (editItem.extinguisherType && editItem.extinguisherType !== 'Other') ? editItem.extinguisherType : null,
         location: editItem.location || null
       }, { merge: true });
 
@@ -2107,7 +2161,7 @@ const SECTIONS = [
         expirationYear: manufactureYear.trim() ? String(parseInt(manufactureYear.trim()) + 6) : '',
         category: 'standard', // New extinguisher is standard, not spare/replaced
         // Keep user/workspace info
-        userId: user.uid,
+        userId: user?.uid,
         workspaceId: currentWorkspaceId,
         // Reset photos for new extinguisher (old photos are in replacement history if needed)
         photos: [],
@@ -2172,6 +2226,8 @@ const SECTIONS = [
         'Vicinity': item.vicinity,
         'Parent Location': item.parentLocation,
         'Section': item.section,
+        'Extinguisher Size': item.extinguisherSize || '',
+        'Extinguisher Type': item.extinguisherType || '',
         'Status': item.status.toUpperCase(),
         'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
         'Notes': item.notes || ''
@@ -2272,7 +2328,7 @@ const SECTIONS = [
   };
 
   const exportTimeData = () => {
-    const timeData = SECTIONS.map(section => ({
+    const timeData = sectionNames.map(section => ({
       'Section': section,
       'Time Spent': formatTime(sectionTimes[section] || 0),
       'Total Milliseconds': sectionTimes[section] || 0,
@@ -2647,6 +2703,25 @@ const SECTIONS = [
       alert('Error saving expiration year. Please try again.');
     }
   };
+  const handleUpdateExtinguisherSize = async (item, size) => {
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      await setDoc(docRef, { extinguisherSize: size || null }, { merge: true });
+    } catch (error) {
+      console.error('Error updating extinguisher size:', error);
+      alert('Error saving size. Please try again.');
+    }
+  };
+  const handleUpdateExtinguisherType = async (item, type) => {
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      const cleanType = (type && type !== 'Other') ? type : null;
+      await setDoc(docRef, { extinguisherType: cleanType }, { merge: true });
+    } catch (error) {
+      console.error('Error updating extinguisher type:', error);
+      alert('Error saving type. Please try again.');
+    }
+  };
 
   const handleSaveNotes = async (item, notesSummary, inspectionData = null) => {
     try {
@@ -2941,7 +3016,7 @@ const SECTIONS = [
     fail: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'fail').length
   };
 
-  const sectionCounts = SECTIONS.map(section => {
+  const sectionCounts = sectionNames.map(section => {
     const items = extinguishers.filter(e => e.section === section);
     return {
       section,
@@ -3372,7 +3447,7 @@ const SECTIONS = [
                   </button>
                   <button
                     onClick={() => {
-                      setShowAddModal(true);
+                      openAddExtinguisherModal();
                       setShowMenu(false);
                     }}
                     className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition w-full"
@@ -3749,11 +3824,32 @@ const SECTIONS = [
           </div>
         </div>
 
+        {!readOnly && (
+          <div className="flex flex-wrap gap-3 mb-6">
+            <button
+              type="button"
+              onClick={() => { setNewBuildingName(''); setShowAddBuildingModal(true); }}
+              className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition font-medium"
+            >
+              <Plus size={20} />
+              Add Building
+            </button>
+            <button
+              type="button"
+              onClick={() => openAddExtinguisherModal()}
+              className="flex items-center gap-2 px-4 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition font-medium"
+            >
+              <Plus size={20} />
+              Add New Extinguisher
+            </button>
+          </div>
+        )}
+
         <div className="relative z-0">
           <Routes>
             <Route
               index
-              element={<SectionGrid sections={SECTIONS} extinguishers={extinguishers} />}
+              element={<SectionGrid buildings={buildings} extinguishers={extinguishers} onAddExtinguisher={readOnly ? undefined : openAddExtinguisherModal} readOnly={readOnly} />}
             />
             <Route
               path="section/:name"
@@ -3781,6 +3877,8 @@ const SECTIONS = [
                   onSaveNotes={readOnly ? undefined : handleSaveNotes}
                   onUpdateManufactureYear={readOnly ? undefined : handleUpdateManufactureYear}
                   onUpdateExpirationYear={readOnly ? undefined : handleUpdateExpirationYear}
+                  onUpdateExtinguisherSize={readOnly ? undefined : handleUpdateExtinguisherSize}
+                  onUpdateExtinguisherType={readOnly ? undefined : handleUpdateExtinguisherType}
                 />
               }
             />
@@ -3830,7 +3928,7 @@ const SECTIONS = [
             </div>
 
             <div className="space-y-3 mb-4">
-              {SECTIONS.map(section => {
+              {sectionNames.map(section => {
                 const time = getTotalTime(section);
                 return (
                   <div key={section} className="flex justify-between items-center p-3 bg-gray-50 rounded">
@@ -3907,12 +4005,16 @@ const SECTIONS = [
                 onChange={(e) => handleNoteSectionChange(e.target.value)}
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
               >
-                {SECTIONS.map(section => (
-                  <option key={section} value={section}>
-                    {section}
-                    {sectionNotes[section]?.notes && ' ✓'}
-                  </option>
-                ))}
+                {sectionNames.length === 0 ? (
+                  <option value="">— Add a building first —</option>
+                ) : (
+                  sectionNames.map(section => (
+                    <option key={section} value={section}>
+                      {section}
+                      {sectionNotes[section]?.notes && ' ✓'}
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -3987,20 +4089,28 @@ const SECTIONS = [
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Default section for rows without a Section column
                 </label>
+                {sectionNames.length === 0 ? (
+                  <p className="text-amber-600 text-sm mb-2">Add a building first to set a default section for imported rows.</p>
+                ) : null}
                 <select
                   value={importSection}
                   onChange={(e) => setImportSection(e.target.value)}
                   className="w-full p-2 border border-gray-300 rounded-lg"
+                  disabled={sectionNames.length === 0}
                 >
-                  {SECTIONS.map(section => (
-                    <option key={section} value={section}>{section}</option>
-                  ))}
+                  {sectionNames.length === 0 ? (
+                    <option value="">— No buildings —</option>
+                  ) : (
+                    sectionNames.map(section => (
+                      <option key={section} value={section}>{section}</option>
+                    ))
+                  )}
                 </select>
                 <p className="mt-2 text-xs text-gray-500">
                   If your file has a <span className="font-semibold">Section</span> column, that value will be used for each row.
                 </p>
               </div>
-              <label className="flex items-center gap-2 px-4 py-3 bg-blue-500 text-white rounded cursor-pointer hover:bg-blue-600 transition w-full justify-center">
+              <label className={`flex items-center gap-2 px-4 py-3 rounded cursor-pointer transition w-full justify-center ${sectionNames.length === 0 ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'}`}>
                 <Upload size={20} />
                 <span>Select File to Import</span>
                 <input
@@ -4009,10 +4119,11 @@ const SECTIONS = [
                   accept=".csv,.xls,.xlsx"
                   onChange={handleFileUpload}
                   className="hidden"
+                  disabled={sectionNames.length === 0}
                 />
               </label>
               <p className="text-sm text-gray-600">
-                Accepts: CSV, XLS, XLSX files. All items will be assigned to {importSection}.
+                {sectionNames.length === 0 ? 'Add a building first to import.' : `Accepts: CSV, XLS, XLSX files. All items will be assigned to ${importSection || 'selected building'}.`}
               </p>
             </div>
           </div>
@@ -4033,7 +4144,7 @@ const SECTIONS = [
           <div className="bg-white rounded-lg max-w-2xl w-full my-8 flex flex-col max-h-[90vh]">
             <div className="flex justify-between items-center p-6 pb-4 flex-shrink-0">
               <h3 className="text-xl font-bold">Add New Fire Extinguisher</h3>
-              <button onClick={() => setShowAddModal(false)}>
+              <button onClick={() => { setShowAddModal(false); setAddModalPreselectedSection(null); }}>
                 <X size={24} />
               </button>
             </div>
@@ -4088,17 +4199,25 @@ const SECTIONS = [
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Section <span className="text-red-500">*</span>
+                  Building / Section <span className="text-red-500">*</span>
                 </label>
-                <select
-                  value={newItem.section}
-                  onChange={(e) => setNewItem({...newItem, section: e.target.value})}
-                  className="w-full p-2 border border-gray-300 rounded-lg"
-                >
-                  {SECTIONS.map(section => (
-                    <option key={section} value={section}>{section}</option>
-                  ))}
-                </select>
+                {addModalPreselectedSection ? (
+                  <div className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700">
+                    {addModalPreselectedSection}
+                  </div>
+                ) : sectionNames.length === 0 ? (
+                  <p className="text-amber-600 text-sm">Create a building first using &quot;Add Building&quot;.</p>
+                ) : (
+                  <select
+                    value={newItem.section}
+                    onChange={(e) => setNewItem({...newItem, section: e.target.value})}
+                    className="w-full p-2 border border-gray-300 rounded-lg"
+                  >
+                    {sectionNames.map(section => (
+                      <option key={section} value={section}>{section}</option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div>
@@ -4151,6 +4270,47 @@ const SECTIONS = [
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Auto-calculated as manufacture year + 6</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                <select
+                  value={newItem.extinguisherSize}
+                  onChange={(e) => setNewItem({...newItem, extinguisherSize: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Size</option>
+                  <option value="5lb">5lb</option>
+                  <option value="10lb">10lb</option>
+                  <option value="15lb">15lb</option>
+                  <option value="20lb">20lb</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={['ABC', 'CO2', ''].includes(newItem.extinguisherType) ? newItem.extinguisherType : 'Other'}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setNewItem({...newItem, extinguisherType: v === 'Other' ? 'Other' : v});
+                  }}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Type</option>
+                  <option value="ABC">ABC</option>
+                  <option value="CO2">CO2</option>
+                  <option value="Other">Other</option>
+                </select>
+                {newItem.extinguisherType !== '' && !['ABC', 'CO2'].includes(newItem.extinguisherType) && (
+                  <input
+                    type="text"
+                    value={newItem.extinguisherType === 'Other' ? '' : newItem.extinguisherType}
+                    onChange={(e) => setNewItem({...newItem, extinguisherType: e.target.value || 'Other'})}
+                    placeholder="Enter custom type (e.g., Purple K, Halotron)"
+                    className="w-full p-2 border border-gray-300 rounded-lg mt-2"
+                  />
+                )}
               </div>
 
               <div>
@@ -4218,6 +4378,49 @@ const SECTIONS = [
               >
                 Cancel
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddBuildingModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Add Building</h3>
+              <button onClick={() => { setShowAddBuildingModal(false); setNewBuildingName(''); }}>
+                <X size={24} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Building name <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={newBuildingName}
+                  onChange={(e) => setNewBuildingName(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="e.g. Main Hospital, Building A"
+                  autoFocus
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleAddBuilding}
+                  className="flex-1 bg-amber-500 text-white p-3 rounded-lg hover:bg-amber-600 flex items-center justify-center gap-2"
+                >
+                  <Plus size={20} />
+                  Add Building
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowAddBuildingModal(false); setNewBuildingName(''); }}
+                  className="flex-1 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -4319,7 +4522,7 @@ const SECTIONS = [
                   onChange={(e) => setEditItem({...editItem, section: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 >
-                  {SECTIONS.map(section => (
+                  {sectionNames.map(section => (
                     <option key={section} value={section}>{section}</option>
                   ))}
                 </select>
@@ -4375,6 +4578,47 @@ const SECTIONS = [
                   ))}
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Auto-calculated as manufacture year + 6</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Size</label>
+                <select
+                  value={editItem.extinguisherSize || ''}
+                  onChange={(e) => setEditItem({...editItem, extinguisherSize: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Size</option>
+                  <option value="5lb">5lb</option>
+                  <option value="10lb">10lb</option>
+                  <option value="15lb">15lb</option>
+                  <option value="20lb">20lb</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={['ABC', 'CO2', ''].includes(editItem.extinguisherType || '') ? (editItem.extinguisherType || '') : 'Other'}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setEditItem({...editItem, extinguisherType: v === 'Other' ? 'Other' : v});
+                  }}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="">Select Type</option>
+                  <option value="ABC">ABC</option>
+                  <option value="CO2">CO2</option>
+                  <option value="Other">Other</option>
+                </select>
+                {(editItem.extinguisherType || '') !== '' && !['ABC', 'CO2'].includes(editItem.extinguisherType || '') && (
+                  <input
+                    type="text"
+                    value={(editItem.extinguisherType || '') === 'Other' ? '' : (editItem.extinguisherType || '')}
+                    onChange={(e) => setEditItem({...editItem, extinguisherType: e.target.value || 'Other'})}
+                    placeholder="Enter custom type (e.g., Purple K, Halotron)"
+                    className="w-full p-2 border border-gray-300 rounded-lg mt-2"
+                  />
+                )}
               </div>
 
               {/* GPS for edit */}
@@ -4802,25 +5046,12 @@ const SECTIONS = [
                   <p className="text-sm text-gray-600">
                     How do you want to start this inspection month?
                   </p>
-                  <div className="space-y-2">
-                    <button
-                      onClick={() => createWorkspace(pendingNewMonth.label, null, pendingNewMonth.monthYear)}
-                      className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-left font-medium"
-                    >
-                      Start blank — I&apos;ll import my extinguisher list later
-                    </button>
-                    {workspaces.length > 0 && (() => {
-                      const copyFromWs = getCurrentWorkspace() || [...workspaces].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))[0];
-                      return copyFromWs ? (
-                        <button
-                          onClick={() => createWorkspace(pendingNewMonth.label, copyFromWs.id, pendingNewMonth.monthYear)}
-                          className="w-full px-4 py-3 border-2 border-green-200 rounded-lg hover:border-green-500 hover:bg-green-50 transition text-left font-medium"
-                        >
-                          Copy extinguishers from &quot;{copyFromWs.label}&quot; (all items start as pending)
-                        </button>
-                      ) : null;
-                    })()}
-                  </div>
+                  <button
+                    onClick={() => createWorkspace(pendingNewMonth.label, pendingNewMonth.monthYear)}
+                    className="w-full px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium text-center"
+                  >
+                    Create Workspace
+                  </button>
                   <button
                     onClick={() => setPendingNewMonth(null)}
                     className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition"

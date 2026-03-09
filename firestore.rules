@@ -23,6 +23,13 @@ service cloud.firestore {
       return isOwner(ownerId) || (signedIn() && shareEnabled(ownerId));
     }
 
+    // Buildings (user-created sections)
+    match /buildings/{id} {
+      allow read: if canReadOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
+    }
+
     // Workspaces
     match /workspaces/{id} {
       allow read: if canReadOwner(resource.data.userId);
@@ -30,9 +37,11 @@ service cloud.firestore {
     }
 
     // Extinguishers (always visible when shared)
+    // create: use request.resource.data (document does not exist yet); update/delete: use resource.data
     match /extinguishers/{id} {
       allow read: if canReadOwner(resource.data.userId);
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Deleted extinguishers archive (immutable)
@@ -46,7 +55,8 @@ service cloud.firestore {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideSectionNotes == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Inspection logs (optional to hide for guests)
@@ -54,7 +64,8 @@ service cloud.firestore {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideInspectionLogs == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Custom assets (optional to hide for guests)
@@ -62,13 +73,15 @@ service cloud.firestore {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideCustomAssets == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
     match /customAssetRows/{id} {
       allow read: if isOwner(resource.data.userId) || (
         signedIn() && shareEnabled(resource.data.userId) && shareExists(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideCustomAssets == true)
       );
-      allow create, update, delete: if isOwner(resource.data.userId);
+      allow create: if isOwner(request.resource.data.userId);
+      allow update, delete: if isOwner(resource.data.userId);
     }
 
     // Share control document; owner can set flags and toggle publicRead
