@@ -5,14 +5,9 @@
   "description": "Fire Extinguisher Tracker - Built by Beck",
   "type": "module",
   "scripts": {
-    "dev": "vite --mode development",
-    "dev:staging": "vite --mode staging",
-    "dev:prod": "vite --mode production",
-    "build": "vite build --mode production",
-    "build:staging": "vite build --mode staging",
-    "build:dev": "vite build --mode development",
+    "dev": "vite",
+    "build": "vite build",
     "preview": "vite preview",
-    "preview:staging": "vite preview --mode staging",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
