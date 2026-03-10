@@ -16,7 +16,7 @@ const admin = require('firebase-admin');
 if (!admin.apps.length) {
   try {
     admin.initializeApp({
-      projectId: 'fire-extinguisher-tracke-9e98f'
+      projectId: process.env.VITE_FIREBASE_PROJECT_ID
     });
   } catch (error) {
     console.error('Error initializing Firebase Admin:', error);
@@ -33,7 +33,7 @@ async function enableAnonymousAuth() {
     console.log('Unfortunately, Firebase Admin SDK cannot directly enable authentication providers.');
     console.log('Please enable Anonymous Authentication through the Firebase Console:');
     console.log('1. Go to https://console.firebase.google.com/');
-    console.log('2. Select project: fire-extinguisher-tracke-9e98f');
+    console.log(`2. Select project: ${process.env.VITE_FIREBASE_PROJECT_ID || '<your-project-id>'}`);
     console.log('3. Go to Authentication > Sign-in method');
     console.log('4. Click on "Anonymous" and enable it');
     console.log('5. Save');
