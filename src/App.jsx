@@ -326,6 +326,12 @@ function App() {
   const [duplicateScanRunning, setDuplicateScanRunning] = useState(false);
   const [duplicateFixRunning, setDuplicateFixRunning] = useState(false);
 
+  const sectionNames = useMemo(() => (
+    buildings
+      .map((b) => (typeof b === 'string' ? b : b?.name))
+      .filter((name) => typeof name === 'string' && name.trim().length > 0)
+  ), [buildings]);
+
   const normalizeStatus = (s) => String(s || '').toLowerCase();
   const pickPreferredDoc = (a, b) => {
     // Returns the preferred doc between a and b using the same rules as list dedupe
