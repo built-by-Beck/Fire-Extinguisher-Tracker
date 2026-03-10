@@ -9,7 +9,7 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   const [mode, setMode] = useState('unchecked');
   const [scanValue, setScanValue] = useState('');
   const scanRef = useRef(null);
-  const [sortBy, setSortBy] = useState('location');
+  const [sortBy, setSortBy] = useState('assetId');
   const [sortOrder, setSortOrder] = useState('asc');
 
   useEffect(() => {

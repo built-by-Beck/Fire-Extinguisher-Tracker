@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Share2, Archive } from 'lucide-react';
@@ -16,7 +16,19 @@ import Calculator from './components/Calculator.jsx';
 import PrintableExtinguisherList from './components/PrintableExtinguisherList.jsx';
 import CustomAssetChecker from './components/CustomAssetChecker.jsx';
 
-function App() {
+const SECTIONS = [
+  'Main Hospital',
+  'Building A',
+  'Building B', 
+  'Building C',
+  'Building D',
+  'WMC',
+  'Employee Parking',
+  'Visitor Parking',
+  'FED'
+];
+
+  function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(null);
@@ -49,10 +61,6 @@ function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSection, setImportSection] = useState('Main Hospital');
   const [showAddModal, setShowAddModal] = useState(false);
-  const [addModalPreselectedSection, setAddModalPreselectedSection] = useState(null);
-  const [showAddBuildingModal, setShowAddBuildingModal] = useState(false);
-  const [newBuildingName, setNewBuildingName] = useState('');
-  const [buildings, setBuildings] = useState([]);
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [newItem, setNewItem] = useState({
     assetId: '',
@@ -661,63 +669,6 @@ function App() {
 
     return () => unsubscribeSectionNotes();
   }, [dataOwnerId, readOnly, viewerSharePrefs.hideSectionNotes]);
-
-  // Load buildings (user-created sections)
-  useEffect(() => {
-    if (!dataOwnerId) {
-      setBuildings([]);
-      return;
-    }
-    const buildingsQuery = query(
-      collection(db, 'buildings'),
-      where('userId', '==', dataOwnerId)
-    );
-    const unsubscribeBuildings = onSnapshot(buildingsQuery, (snapshot) => {
-      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      const sorted = list.sort((a, b) => {
-        const orderA = a.sortOrder ?? 999;
-        const orderB = b.sortOrder ?? 999;
-        if (orderA !== orderB) return orderA - orderB;
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        if (dateA !== dateB) return dateA - dateB;
-        return (a.name || '').localeCompare(b.name || '');
-      });
-      setBuildings(sorted);
-    }, (error) => {
-      console.error('Firebase buildings listener error:', error.code, error.message);
-    });
-    return () => unsubscribeBuildings();
-  }, [dataOwnerId]);
-
-  // One-time migration: create building docs from existing extinguisher sections
-  const buildingsMigrationDoneRef = useRef(false);
-  useEffect(() => {
-    if (!dataOwnerId || !user || user.uid !== dataOwnerId || readOnly) return;
-    if (buildings.length > 0) return;
-    if (extinguishers.length === 0) return;
-    const key = `buildingsMigrated_${dataOwnerId}`;
-    if (localStorage.getItem(key)) return;
-    if (buildingsMigrationDoneRef.current) return;
-    buildingsMigrationDoneRef.current = true;
-    const uniqueSections = [...new Set(extinguishers.map(e => e.section).filter(Boolean))];
-    if (uniqueSections.length === 0) return;
-    (async () => {
-      try {
-        for (const name of uniqueSections) {
-          await addDoc(collection(db, 'buildings'), {
-            userId: dataOwnerId,
-            name,
-            createdAt: new Date().toISOString()
-          });
-        }
-        localStorage.setItem(key, '1');
-      } catch (err) {
-        console.error('Buildings migration error:', err);
-        buildingsMigrationDoneRef.current = false;
-      }
-    })();
-  }, [dataOwnerId, user, readOnly, buildings.length, extinguishers.length]);
 
   useEffect(() => {
     if (dataOwnerId && currentWorkspaceId && Object.keys(sectionTimes).length > 0) {
@@ -1645,10 +1596,6 @@ function App() {
     reader.onload = (event) => {
       const processFile = async () => {
         try {
-          if (!importSection) {
-            alert('Please add a building first and select a default section for import.');
-            return;
-          }
           const data = event.target.result;
           const workbook = new ExcelJS.Workbook();
 
@@ -1801,13 +1748,12 @@ function App() {
         }
       }
 
-      const sectionToUse = addModalPreselectedSection || newItem.section;
       const item = {
         assetId: newItem.assetId.trim(),
         vicinity: newItem.vicinity.trim(),
         serial: newItem.serial.trim(),
         parentLocation: newItem.parentLocation.trim(),
-        section: sectionToUse,
+        section: newItem.section,
         category: newItem.category || 'standard',
         manufactureYear: newItem.manufactureYear || null,
         expirationYear: newItem.expirationYear || null,
@@ -1831,7 +1777,7 @@ function App() {
         serial: '',
         vicinity: '',
         parentLocation: '',
-        section: sectionNames[0] || '',
+        section: 'Main Hospital',
         category: 'standard',
         manufactureYear: '',
         expirationYear: '',
@@ -1840,46 +1786,11 @@ function App() {
       });
       setNewItemPhoto(null);
       setNewItemGps(null);
-      setAddModalPreselectedSection(null);
       alert('New fire extinguisher added successfully!');
     } catch (error) {
       console.error('Error adding extinguisher:', error);
       alert('Error adding fire extinguisher. Please try again.');
     }
-  };
-
-  const handleAddBuilding = async () => {
-    const name = (newBuildingName || '').trim();
-    if (!name) {
-      alert('Building name is required');
-      return;
-    }
-    if (!user?.uid) return;
-    const buildingNames = buildings.map(b => (typeof b === 'string' ? b : b.name));
-    if (buildingNames.includes(name)) {
-      alert('A building with that name already exists');
-      return;
-    }
-    try {
-      await addDoc(collection(db, 'buildings'), {
-        userId: user.uid,
-        name,
-        createdAt: new Date().toISOString()
-      });
-      setShowAddBuildingModal(false);
-      setNewBuildingName('');
-      alert('Building added successfully!');
-    } catch (error) {
-      console.error('Error adding building:', error);
-      alert('Error adding building. Please try again.');
-    }
-  };
-
-  const openAddExtinguisherModal = (preselectedSection = null) => {
-    setAddModalPreselectedSection(preselectedSection);
-    const defaultSection = preselectedSection || sectionNames[0] || '';
-    setNewItem(prev => ({ ...prev, section: defaultSection }));
-    setShowAddModal(true);
   };
 
   const handleInspection = async (item, status, notes = '', inspectionData = null) => {
@@ -2343,7 +2254,7 @@ function App() {
   };
 
   const exportTimeData = () => {
-    const timeData = sectionNames.map(section => ({
+    const timeData = SECTIONS.map(section => ({
       'Section': section,
       'Time Spent': formatTime(sectionTimes[section] || 0),
       'Total Milliseconds': sectionTimes[section] || 0,
@@ -3033,7 +2944,7 @@ function App() {
     fail: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'fail').length
   };
 
-  const sectionCounts = sectionNames.map(section => {
+  const sectionCounts = SECTIONS.map(section => {
     const items = extinguishers.filter(e => e.section === section);
     return {
       section,
@@ -3464,7 +3375,7 @@ function App() {
                   </button>
                   <button
                     onClick={() => {
-                      openAddExtinguisherModal();
+                      setShowAddModal(true);
                       setShowMenu(false);
                     }}
                     className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition w-full"
@@ -3841,32 +3752,11 @@ function App() {
           </div>
         </div>
 
-        {!readOnly && (
-          <div className="flex flex-wrap gap-3 mb-6">
-            <button
-              type="button"
-              onClick={() => { setNewBuildingName(''); setShowAddBuildingModal(true); }}
-              className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition font-medium"
-            >
-              <Plus size={20} />
-              Add Building
-            </button>
-            <button
-              type="button"
-              onClick={() => openAddExtinguisherModal()}
-              className="flex items-center gap-2 px-4 py-2.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition font-medium"
-            >
-              <Plus size={20} />
-              Add New Extinguisher
-            </button>
-          </div>
-        )}
-
         <div className="relative z-0">
           <Routes>
             <Route
               index
-              element={<SectionGrid buildings={buildings} extinguishers={extinguishers} onAddExtinguisher={readOnly ? undefined : openAddExtinguisherModal} readOnly={readOnly} />}
+              element={<SectionGrid sections={SECTIONS} extinguishers={extinguishers} />}
             />
             <Route
               path="section/:name"
@@ -3945,7 +3835,7 @@ function App() {
             </div>
 
             <div className="space-y-3 mb-4">
-              {sectionNames.map(section => {
+              {SECTIONS.map(section => {
                 const time = getTotalTime(section);
                 return (
                   <div key={section} className="flex justify-between items-center p-3 bg-gray-50 rounded">
@@ -4022,16 +3912,12 @@ function App() {
                 onChange={(e) => handleNoteSectionChange(e.target.value)}
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
               >
-                {sectionNames.length === 0 ? (
-                  <option value="">— Add a building first —</option>
-                ) : (
-                  sectionNames.map(section => (
-                    <option key={section} value={section}>
-                      {section}
-                      {sectionNotes[section]?.notes && ' ✓'}
-                    </option>
-                  ))
-                )}
+                {SECTIONS.map(section => (
+                  <option key={section} value={section}>
+                    {section}
+                    {sectionNotes[section]?.notes && ' ✓'}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -4106,28 +3992,20 @@ function App() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Default section for rows without a Section column
                 </label>
-                {sectionNames.length === 0 ? (
-                  <p className="text-amber-600 text-sm mb-2">Add a building first to set a default section for imported rows.</p>
-                ) : null}
                 <select
                   value={importSection}
                   onChange={(e) => setImportSection(e.target.value)}
                   className="w-full p-2 border border-gray-300 rounded-lg"
-                  disabled={sectionNames.length === 0}
                 >
-                  {sectionNames.length === 0 ? (
-                    <option value="">— No buildings —</option>
-                  ) : (
-                    sectionNames.map(section => (
-                      <option key={section} value={section}>{section}</option>
-                    ))
-                  )}
+                  {SECTIONS.map(section => (
+                    <option key={section} value={section}>{section}</option>
+                  ))}
                 </select>
                 <p className="mt-2 text-xs text-gray-500">
                   If your file has a <span className="font-semibold">Section</span> column, that value will be used for each row.
                 </p>
               </div>
-              <label className={`flex items-center gap-2 px-4 py-3 rounded cursor-pointer transition w-full justify-center ${sectionNames.length === 0 ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'}`}>
+              <label className="flex items-center gap-2 px-4 py-3 bg-blue-500 text-white rounded cursor-pointer hover:bg-blue-600 transition w-full justify-center">
                 <Upload size={20} />
                 <span>Select File to Import</span>
                 <input
@@ -4136,11 +4014,10 @@ function App() {
                   accept=".csv,.xls,.xlsx"
                   onChange={handleFileUpload}
                   className="hidden"
-                  disabled={sectionNames.length === 0}
                 />
               </label>
               <p className="text-sm text-gray-600">
-                {sectionNames.length === 0 ? 'Add a building first to import.' : `Accepts: CSV, XLS, XLSX files. All items will be assigned to ${importSection || 'selected building'}.`}
+                Accepts: CSV, XLS, XLSX files. All items will be assigned to {importSection}.
               </p>
             </div>
           </div>
@@ -4161,7 +4038,7 @@ function App() {
           <div className="bg-white rounded-lg max-w-2xl w-full my-8 flex flex-col max-h-[90vh]">
             <div className="flex justify-between items-center p-6 pb-4 flex-shrink-0">
               <h3 className="text-xl font-bold">Add New Fire Extinguisher</h3>
-              <button onClick={() => { setShowAddModal(false); setAddModalPreselectedSection(null); }}>
+              <button onClick={() => setShowAddModal(false)}>
                 <X size={24} />
               </button>
             </div>
@@ -4216,25 +4093,17 @@ function App() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Building / Section <span className="text-red-500">*</span>
+                  Section <span className="text-red-500">*</span>
                 </label>
-                {addModalPreselectedSection ? (
-                  <div className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-700">
-                    {addModalPreselectedSection}
-                  </div>
-                ) : sectionNames.length === 0 ? (
-                  <p className="text-amber-600 text-sm">Create a building first using &quot;Add Building&quot;.</p>
-                ) : (
-                  <select
-                    value={newItem.section}
-                    onChange={(e) => setNewItem({...newItem, section: e.target.value})}
-                    className="w-full p-2 border border-gray-300 rounded-lg"
-                  >
-                    {sectionNames.map(section => (
-                      <option key={section} value={section}>{section}</option>
-                    ))}
-                  </select>
-                )}
+                <select
+                  value={newItem.section}
+                  onChange={(e) => setNewItem({...newItem, section: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  {SECTIONS.map(section => (
+                    <option key={section} value={section}>{section}</option>
+                  ))}
+                </select>
               </div>
 
               <div>
@@ -4400,49 +4269,6 @@ function App() {
         </div>
       )}
 
-      {showAddBuildingModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">Add Building</h3>
-              <button onClick={() => { setShowAddBuildingModal(false); setNewBuildingName(''); }}>
-                <X size={24} />
-              </button>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Building name <span className="text-red-500">*</span></label>
-                <input
-                  type="text"
-                  value={newBuildingName}
-                  onChange={(e) => setNewBuildingName(e.target.value)}
-                  className="w-full p-2 border border-gray-300 rounded-lg"
-                  placeholder="e.g. Main Hospital, Building A"
-                  autoFocus
-                />
-              </div>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={handleAddBuilding}
-                  className="flex-1 bg-amber-500 text-white p-3 rounded-lg hover:bg-amber-600 flex items-center justify-center gap-2"
-                >
-                  <Plus size={20} />
-                  Add Building
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setShowAddBuildingModal(false); setNewBuildingName(''); }}
-                  className="flex-1 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {scanMode && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
@@ -4539,7 +4365,7 @@ function App() {
                   onChange={(e) => setEditItem({...editItem, section: e.target.value})}
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 >
-                  {sectionNames.map(section => (
+                  {SECTIONS.map(section => (
                     <option key={section} value={section}>{section}</option>
                   ))}
                 </select>
