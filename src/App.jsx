@@ -4709,14 +4709,12 @@ const SECTIONS = [
 
             <div className="flex gap-4 pt-4 mt-6">
               <button
-                onClick={async () => {
+                onClick={() => {
                   if (!replaceForm.serial || !replaceForm.serial.trim()) {
                     alert('Serial number is required.');
                     return;
                   }
-                  if (await showConfirm(`Replace extinguisher ${replaceItem.assetId}?\n\nOld Serial: ${replaceItem.serial || 'N/A'}\nNew Serial: ${replaceForm.serial}\n\nThe new extinguisher will be marked as PASS and the old info will be saved to history.`)) {
-                    handleReplaceExtinguisher(replaceItem, replaceForm);
-                  }
+                  handleReplaceExtinguisher(replaceItem, replaceForm);
                 }}
                 className="flex-1 bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold"
               >
