@@ -57,6 +57,23 @@ const SECTIONS = [
     manufactureYear: '',
     notes: ''
   });
+  // In-app confirm modal (replaces window.confirm for tablet/mobile compatibility)
+  const [confirmModal, setConfirmModal] = useState(null);
+  const confirmResolveRef = useRef(null);
+  const showConfirm = (message) => {
+    return new Promise((resolve) => {
+      confirmResolveRef.current = resolve;
+      setConfirmModal({ message });
+    });
+  };
+  const handleConfirmOk = () => {
+    confirmResolveRef.current?.(true);
+    setConfirmModal(null);
+  };
+  const handleConfirmCancel = () => {
+    confirmResolveRef.current?.(false);
+    setConfirmModal(null);
+  };
   const [showMenu, setShowMenu] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSection, setImportSection] = useState('Main Hospital');
@@ -420,7 +437,7 @@ const SECTIONS = [
   const runDuplicateCleanup = async () => {
     if (!user || !currentWorkspaceId) { alert('Please sign in and select a workspace.'); return; }
     if (!duplicateGroups || duplicateGroups.length === 0) { setShowDuplicateModal(false); return; }
-    const confirm = window.confirm(`This will merge and remove ${duplicateGroups.reduce((n,g)=>n+g.remove.length,0)} duplicate records across ${duplicateGroups.length} Asset IDs. Continue?`);
+    const confirm = await showConfirm(`This will merge and remove ${duplicateGroups.reduce((n,g)=>n+g.remove.length,0)} duplicate records across ${duplicateGroups.length} Asset IDs. Continue?`);
     if (!confirm) return;
     setDuplicateFixRunning(true);
     try {
@@ -748,8 +765,8 @@ const SECTIONS = [
     return storedTime + currentTime;
   };
 
-  const clearSectionTime = (section) => {
-    if (window.confirm(`Clear time for ${section}?`)) {
+  const clearSectionTime = async (section) => {
+    if (await showConfirm(`Clear time for ${section}?`)) {
       setSectionTimes(prev => {
         const updated = { ...prev };
         delete updated[section];
@@ -758,8 +775,8 @@ const SECTIONS = [
     }
   };
 
-  const clearAllTimes = () => {
-    if (window.confirm('Clear all time tracking data?')) {
+  const clearAllTimes = async () => {
+    if (await showConfirm('Clear all time tracking data?')) {
       setSectionTimes({});
       stopTimer();
       if (currentWorkspaceId) {
@@ -875,7 +892,7 @@ const SECTIONS = [
 
   const resetCurrentWorkspaceToPending = async () => {
     if (!user) return;
-    if (!window.confirm(`Reset ALL extinguishers to pending?\n\nThis clears current inspection status (pass/fail) so you can start fresh. Past inspection history is kept.`)) return;
+    if (!await showConfirm(`Reset ALL extinguishers to pending?\n\nThis clears current inspection status (pass/fail) so you can start fresh. Past inspection history is kept.`)) return;
     try {
       // Query ALL extinguishers for this user (regardless of workspaceId)
       const extQuery = query(
@@ -1216,7 +1233,7 @@ const SECTIONS = [
         '',
         'Continue?'
       ].join('\n');
-      if (!window.confirm(confirmText)) return;
+      if (!await showConfirm(confirmText)) return;
 
       // 1) Delete current user's docs (chunked for safety)
       const deleteCollectionDocs = async (collName) => {
@@ -1402,8 +1419,8 @@ const SECTIONS = [
 
       const backup = JSON.parse(backupData);
 
-      const confirmRestore = window.confirm(
-        `⚠️ RESTORE BACKUP\n\n` +
+      const confirmRestore = await showConfirm(
+        `RESTORE BACKUP\n\n` +
         `This will replace ALL current data with the backup from:\n` +
         `${new Date(backup.backupTime).toLocaleString()}\n\n` +
         `Backup contains:\n` +
@@ -1416,8 +1433,8 @@ const SECTIONS = [
       if (!confirmRestore) return;
 
       // Double confirmation for safety
-      const doubleConfirm = window.confirm(
-        `🔴 FINAL WARNING\n\n` +
+      const doubleConfirm = await showConfirm(
+        `FINAL WARNING\n\n` +
         `You are about to restore data from ${backup.date}.\n` +
         `This action CANNOT be undone.\n\n` +
         `Are you absolutely sure?`
@@ -1552,7 +1569,7 @@ const SECTIONS = [
         return;
       }
 
-      const confirm1 = window.confirm(
+      const confirm1 = await showConfirm(
         `Found ${needsRepair.length} extinguishers without a workspaceId.\n\n` +
         `This will assign them to the current workspace: ${currentWorkspaceId}\n\n` +
         `Continue?`
@@ -1981,7 +1998,7 @@ const SECTIONS = [
   };
 
   const deleteItem = async (item, options = {}) => {
-    if (window.confirm(`Are you sure you want to permanently delete fire extinguisher ${item.assetId}? This cannot be undone.`)) {
+    if (await showConfirm(`Are you sure you want to permanently delete fire extinguisher ${item.assetId}? This cannot be undone.`)) {
       const reason = window.prompt('Optional: Enter a reason for deleting this extinguisher', '');
       if (reason === null) return; // user cancelled the prompt
 
@@ -2346,7 +2363,7 @@ const SECTIONS = [
         `Exported: ${new Date(syncData.exportedAt).toLocaleString()}\n\n` +
         `This will REPLACE all data in your current workspace.`;
 
-      if (!window.confirm(confirmMsg)) {
+      if (!await showConfirm(confirmMsg)) {
         setSyncImporting(false);
         event.target.value = '';
         return;
@@ -2421,7 +2438,7 @@ const SECTIONS = [
     }
 
     const workspaceLabel = getCurrentWorkspace()?.label || 'current workspace';
-    if (!window.confirm(`Are you sure you want to clear all data for ${workspaceLabel}?\n\nThis will delete all extinguishers and data for this month only. Other months will not be affected.\n\nThis cannot be undone.`)) {
+    if (!await showConfirm(`Are you sure you want to clear all data for ${workspaceLabel}?\n\nThis will delete all extinguishers and data for this month only. Other months will not be affected.\n\nThis cannot be undone.`)) {
       return;
     }
 
@@ -2568,7 +2585,7 @@ const SECTIONS = [
   const handlePass = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'pass', notesSummary, inspectionData);
   const handleFail = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'fail', notesSummary, inspectionData);
   const handleResetToPending = async (item) => {
-    if (!window.confirm(`Reset this extinguisher to pending?\n\nAsset ID: ${item.assetId}\n\nThis will clear the current inspection status so you can re-inspect it. Past inspection history is preserved.`)) {
+    if (!await showConfirm(`Reset this extinguisher to pending?\n\nAsset ID: ${item.assetId}\n\nThis will clear the current inspection status so you can re-inspect it. Past inspection history is preserved.`)) {
       return;
     }
     try {
@@ -2744,7 +2761,7 @@ const SECTIONS = [
     console.log('Current month:', currentMonth);
     console.log('User ID:', user?.uid);
 
-    if (!window.confirm(`Start new monthly inspection cycle for ${currentMonth}?\n\nThis will:\n• Reset all extinguisher statuses to "pending"\n• Save current inspection results to history\n• Keep all extinguisher data intact`)) {
+    if (!await showConfirm(`Start new monthly inspection cycle for ${currentMonth}?\n\nThis will:\n• Reset all extinguisher statuses to "pending"\n• Save current inspection results to history\n• Keep all extinguisher data intact`)) {
       console.log('User cancelled reset');
       return;
     }
@@ -3780,7 +3797,7 @@ const SECTIONS = [
                   onReset={readOnly ? undefined : handleResetToPending}
                   onEdit={readOnly ? undefined : handleEdit}
                   onReplace={readOnly ? undefined : handleOpenReplace}
-                  onDelete={adminMode && !readOnly ? (item) => deleteItem(item, { navigateAfter: true }) : undefined}
+                  onDelete={!readOnly ? (item) => deleteItem(item, { navigateAfter: true }) : undefined}
                   onSaveNotes={readOnly ? undefined : handleSaveNotes}
                   onUpdateManufactureYear={readOnly ? undefined : handleUpdateManufactureYear}
                   onUpdateExpirationYear={readOnly ? undefined : handleUpdateExpirationYear}
@@ -3816,6 +3833,7 @@ const SECTIONS = [
                     <CustomAssetChecker
                       user={user}
                       currentWorkspaceId={currentWorkspaceId}
+                      showConfirm={showConfirm}
                     />
                   )
               }
@@ -4696,9 +4714,7 @@ const SECTIONS = [
                     alert('Serial number is required.');
                     return;
                   }
-                  if (window.confirm(`Replace extinguisher ${replaceItem.assetId}?\n\nOld Serial: ${replaceItem.serial || 'N/A'}\nNew Serial: ${replaceForm.serial}\n\nThe new extinguisher will be marked as PASS and the old info will be saved to history.`)) {
-                    handleReplaceExtinguisher(replaceItem, replaceForm);
-                  }
+                  handleReplaceExtinguisher(replaceItem, replaceForm);
                 }}
                 className="flex-1 bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold"
               >
@@ -4778,9 +4794,9 @@ const SECTIONS = [
                       </div>
                       <button
                         type="button"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          if (window.confirm(`Archive "${workspace.label}"?\n\nThis will save all inspection results as proof and remove this month from your active list. A proof CSV will be downloaded.`)) {
+                          if (await showConfirm(`Archive "${workspace.label}"?\n\nThis will save all inspection results as proof and remove this month from your active list. A proof CSV will be downloaded.`)) {
                             archiveWorkspace(workspace.id);
                             setShowWorkspaceSwitcher(false);
                           }
@@ -4809,9 +4825,9 @@ const SECTIONS = [
 
                 {workspaces.length > 0 && getCurrentWorkspace() && (
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       const ws = getCurrentWorkspace();
-                      if (window.confirm(`Archive "${ws.label}" inspection?\n\nThis will save all inspection results and remove it from your active workspaces.`)) {
+                      if (await showConfirm(`Archive "${ws.label}" inspection?\n\nThis will save all inspection results and remove it from your active workspaces.`)) {
                         archiveWorkspace(ws.id);
                         setShowWorkspaceSwitcher(false);
                       }
@@ -5392,6 +5408,28 @@ const SECTIONS = [
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+      {/* In-app Confirm Modal (replaces window.confirm for tablet/mobile) */}
+      {confirmModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[100]">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+            <p className="text-gray-800 whitespace-pre-line mb-6">{confirmModal.message}</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleConfirmCancel}
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmOk}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium"
+              >
+                OK
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -3,7 +3,7 @@ import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where
 import { db } from '../firebase';
 import { Plus, X, Trash2, Type, CheckSquare, GripVertical } from 'lucide-react';
 
-export default function CustomAssetTable({ user, workspaceId, tab, onUpdateTab }) {
+export default function CustomAssetTable({ user, workspaceId, tab, onUpdateTab, showConfirm }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -118,7 +118,7 @@ export default function CustomAssetTable({ user, workspaceId, tab, onUpdateTab }
 
   // Delete row
   const handleDeleteRow = async (rowId) => {
-    if (!window.confirm('Delete this asset?')) return;
+    if (!await showConfirm('Delete this asset?')) return;
 
     try {
       await deleteDoc(doc(db, 'customAssetRows', rowId));

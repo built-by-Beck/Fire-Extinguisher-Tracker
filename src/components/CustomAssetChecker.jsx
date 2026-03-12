@@ -5,7 +5,7 @@ import { db } from '../firebase';
 import { ArrowLeft, Plus, X, Trash2, Edit2, Check, CheckSquare, Type } from 'lucide-react';
 import CustomAssetTable from './CustomAssetTable';
 
-export default function CustomAssetChecker({ user, currentWorkspaceId }) {
+export default function CustomAssetChecker({ user, currentWorkspaceId, showConfirm }) {
   const navigate = useNavigate();
   const [tabs, setTabs] = useState([]);
   const [activeTabId, setActiveTabId] = useState(null);
@@ -246,6 +246,7 @@ export default function CustomAssetChecker({ user, currentWorkspaceId }) {
             workspaceId={currentWorkspaceId}
             tab={activeTab}
             onUpdateTab={(updates) => handleUpdateTab(activeTab.id, updates)}
+            showConfirm={showConfirm}
           />
         ) : null}
       </div>
