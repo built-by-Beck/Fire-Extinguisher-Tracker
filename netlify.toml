@@ -1,5 +1,8 @@
 [build]
   publish = "dist"
 
-[secrets-scanning]
-  enabled = false
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "VITE_ADSENSE_PUBLISHER_ID,VITE_CALCULATOR_URL,VITE_FIREBASE_API_KEY"
+
+[[plugins]]
+  package = "./plugins/secrets-config"
