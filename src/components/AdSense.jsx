@@ -28,12 +28,7 @@ const AdSense = ({
 
   // Don't render ads in development
   if (process.env.NODE_ENV !== 'production') {
-    return (
-      <div className={`border-2 border-dashed border-gray-300 p-4 text-center text-gray-500 ${className}`} style={style}>
-        <p className="text-sm">AdSense Ad (Development Mode)</p>
-        <p className="text-xs">Ads will appear here in production</p>
-      </div>
-    );
+    return null;
   }
 
   return (

@@ -74,6 +74,27 @@ const SECTIONS = [
     confirmResolveRef.current?.(false);
     setConfirmModal(null);
   };
+  // In-app prompt modal (replaces window.prompt for tablet/mobile compatibility)
+  const [promptModal, setPromptModal] = useState(null);
+  const [promptValue, setPromptValue] = useState('');
+  const promptResolveRef = useRef(null);
+  const showPrompt = (message, defaultValue = '') => {
+    return new Promise((resolve) => {
+      promptResolveRef.current = resolve;
+      setPromptValue(defaultValue);
+      setPromptModal({ message });
+    });
+  };
+  const handlePromptOk = () => {
+    promptResolveRef.current?.(promptValue);
+    setPromptModal(null);
+    setPromptValue('');
+  };
+  const handlePromptCancel = () => {
+    promptResolveRef.current?.(null);
+    setPromptModal(null);
+    setPromptValue('');
+  };
   const [showMenu, setShowMenu] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSection, setImportSection] = useState('Main Hospital');
@@ -1999,7 +2020,7 @@ const SECTIONS = [
 
   const deleteItem = async (item, options = {}) => {
     if (await showConfirm(`Are you sure you want to permanently delete fire extinguisher ${item.assetId}? This cannot be undone.`)) {
-      const reason = window.prompt('Optional: Enter a reason for deleting this extinguisher', '');
+      const reason = await showPrompt('Optional: Enter a reason for deleting this extinguisher');
       if (reason === null) return; // user cancelled the prompt
 
       try {
@@ -5428,6 +5449,36 @@ const SECTIONS = [
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium"
               >
                 OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* In-app Prompt Modal (replaces window.prompt for tablet/mobile) */}
+      {promptModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[100]">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+            <p className="text-gray-800 whitespace-pre-line mb-4">{promptModal.message}</p>
+            <input
+              type="text"
+              value={promptValue}
+              onChange={(e) => setPromptValue(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg p-3 mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Enter reason (optional)"
+              autoFocus
+            />
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handlePromptCancel}
+                className="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePromptOk}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 font-medium"
+              >
+                Delete
               </button>
             </div>
           </div>
