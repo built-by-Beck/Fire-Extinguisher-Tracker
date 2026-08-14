@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "description": "Fire Extinguisher Tracker - Built by Beck",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -194,9 +194,7 @@ Import
 
 ## License
 
-Copyright 2025 David Beck (built_by_Beck). All rights reserved.
-
-This software is proprietary and confidential. See LICENSE for details.
+This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 ## Changelog
 
